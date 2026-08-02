@@ -38,6 +38,26 @@ export interface ToolContext {
   now: Date;
 }
 
+/**
+ * Event types that can physically block or endanger travel.
+ *
+ * One list, shared by the evidence planner, the deterministic composer and the
+ * API service, so "what counts as a hazard" cannot drift between the layer that
+ * retrieves records and the layer that describes them.
+ */
+export const HAZARD_EVENT_TYPES: EventType[] = [
+  "road_closure",
+  "flood",
+  "evacuation_order",
+  "landslide",
+  "fire",
+];
+
+/** Default search radius for resource lookups, in meters. */
+export const DEFAULT_RESOURCE_RADIUS_M = 8_000;
+/** Upper bound on a caller-supplied radius — a whole-planet query is not a query. */
+export const MAX_RESOURCE_RADIUS_M = 50_000;
+
 // ---------------------------------------------------------------------------
 // Input schemas
 // ---------------------------------------------------------------------------
@@ -57,6 +77,15 @@ export const GetEventDetailsInput = z.object({ event_id: z.string().min(1) });
 export const GetNearbyResourcesInput = LatLonSchema.extend({
   resource_type: ResourceTypeSchema.optional(),
   status: OperationalStatusSchema.optional(),
+  /**
+   * Without a bound the store returns every resource it holds, sorted by
+   * distance — a "nearby" list whose tail can be in another county.
+   */
+  radius_m: z
+    .number()
+    .positive()
+    .max(MAX_RESOURCE_RADIUS_M)
+    .default(DEFAULT_RESOURCE_RADIUS_M),
 });
 
 export const GetResourceStatusInput = z.object({ resource_id: z.string().min(1) });
@@ -283,6 +312,7 @@ function get_nearby_resources(
     lon: number;
     resource_type?: ResourceType;
     status?: OperationalStatus;
+    radius_m?: number;
   },
 ): NearbyResourcesResult {
   const args = GetNearbyResourcesInput.parse(input);
@@ -290,6 +320,7 @@ function get_nearby_resources(
     center: [args.lon, args.lat],
     type: args.resource_type,
     status: args.status,
+    radius_m: args.radius_m,
   });
 
   const recommendable: NearbyResource[] = [];
@@ -468,12 +499,10 @@ export function gatherEvidence(
 ): EvidenceBundle {
   const { intent } = planQuery(question);
   const [lon, lat] = at;
-  const radius = opts.radius_m ?? 8000;
+  const radius = opts.radius_m ?? DEFAULT_RESOURCE_RADIUS_M;
 
   const typeFilter: EventType[] | undefined =
-    intent === "roads_to_avoid"
-      ? ["road_closure", "evacuation_order", "flood", "landslide", "fire"]
-      : undefined;
+    intent === "roads_to_avoid" ? HAZARD_EVENT_TYPES : undefined;
 
   const events = ctx.store.queryEvents({
     center: at,
@@ -498,6 +527,7 @@ export function gatherEvidence(
       lat,
       lon,
       resource_type: resourceType,
+      radius_m: radius,
     });
     bundle.resources = recommendable;
     bundle.rejected_resources = rejected as RejectedResource[];

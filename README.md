@@ -34,7 +34,7 @@ Most disaster chatbots put the model in front: search, summarize, hope. Harborli
 
 ## Sentient technology
 
-Harborline was designed around Sentient's open-source GRID ecosystem. The MVP ships a deterministic tool pipeline for latency-sensitive questions, and `packages/agent-tools` defines an **adapter slot** where **ROMA** (recursive meta-agent investigations of conflicting reports) and **OpenDeepSearch** (open-web retrieval beyond structured feeds) plug in behind the same tool contract — agent orchestration above the evidence layer, never instead of it. See [docs/ARCHITECTURE.md](./docs/ARCHITECTURE.md) and [docs/ROADMAP.md](./docs/ROADMAP.md).
+Harborline was designed around Sentient's open-source GRID ecosystem. The MVP ships a deterministic tool pipeline for latency-sensitive questions, and `packages/agent-tools` defines an **adapter slot** where **ROMA** (recursive meta-agent investigations of conflicting reports) and **OpenDeepSearch** (open-web retrieval beyond structured feeds) plug in behind the same tool contract — agent orchestration above the evidence layer, never instead of it. The full integration design — ROMA's atomizer→planner→executor loop as the investigation tier, OpenDeepSearch as the `search_verified_news` backend, and serving Harborline as a Sentient Chat agent via the Sentient Agent Framework — is in [docs/SENTIENT.md](./docs/SENTIENT.md).
 
 ## Architecture
 
@@ -85,6 +85,7 @@ Open **<http://localhost:3000>**. The seeded scenario gives you an active flood 
 | `DEMO_MODE` | `services/api` | `1` in dev | Seeds the deterministic Seattle scenario at boot; live connectors keep running. `0` for live-only |
 | `ANTHROPIC_API_KEY` | `services/api` | unset | **Optional.** Enables the LLM composer for wording — output still passes the safety validator or is discarded |
 | `ANTHROPIC_MODEL` | `services/api` | `claude-sonnet-5` | Composer model override; only read when the key is set |
+| `ALLOWED_ORIGINS` | `services/api` | unset | Comma-separated CORS allowlist. Unset: localhost-only in dev, deny cross-origin in production |
 | `NEXT_PUBLIC_API_URL` | `apps/web` | `http://localhost:8787` | REST + SSE base URL |
 
 ## Commands
@@ -108,7 +109,7 @@ Open **<http://localhost:3000>**. The seeded scenario gives you an active flood 
 | `apps/web` | Next.js 16 UI — MapLibre dark map, live feed, assistant |
 | `evals` | Vitest suites for safety, dedup, freshness, and the end-to-end scenario |
 | `infrastructure` | Optional PostGIS + Redis compose stack for the upgrade path |
-| `docs` | [Build guide](./docs/BUILD_GUIDE.md) · [plan evaluation](./docs/PLAN_EVALUATION.md) · [architecture](./docs/ARCHITECTURE.md) · [API reference](./docs/API.md) · [runbook](./docs/RUNBOOK.md) · [roadmap](./docs/ROADMAP.md) |
+| `docs` | [Build guide](./docs/BUILD_GUIDE.md) · [plan evaluation](./docs/PLAN_EVALUATION.md) · [architecture](./docs/ARCHITECTURE.md) · [API reference](./docs/API.md) · [runbook](./docs/RUNBOOK.md) · [roadmap](./docs/ROADMAP.md) · [Sentient integration](./docs/SENTIENT.md) |
 
 ## Built with
 
@@ -119,3 +120,15 @@ TypeScript end to end: Next.js 16, React 19, Tailwind 4, MapLibre GL, TanStack Q
 ## License
 
 MIT. See [LICENSE](LICENSE).
+
+---
+
+> **Note — the revamp.** This repository is a ground-up rebuild of the original
+> Sentient Labs hackathon project. The hackathon version proved the concept and won the
+> award; this revamp rebuilds it with current engineering and research practice in
+> mind — an evidence-first architecture with provenance and freshness on every record,
+> a safety validator gating all model output, 51 automated evals including the full
+> acceptance scenario, a security + correctness hardening pass (rate limiting, bounded
+> SSE, store lifecycle, prompt-injection defenses), and documentation grounded in the
+> current upstream Sentient stack ([docs/SENTIENT.md](./docs/SENTIENT.md)) rather than
+> hackathon-week memory.

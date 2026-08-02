@@ -78,6 +78,25 @@ export function eventDistanceMeters(pt: LonLat, event: CanonicalEvent): number {
   );
 }
 
+/** Parsed `ends_at`, or null when absent/unparseable. */
+function endsAtMs(event: CanonicalEvent): number | null {
+  if (!event.ends_at) return null;
+  const ms = new Date(event.ends_at).getTime();
+  return Number.isFinite(ms) ? ms : null;
+}
+
+/**
+ * Status to store for an event whose end time may already have passed.
+ *
+ * Only "active" is transitioned — "cancelled" is a stronger, deliberate
+ * statement than "expired" and is never downgraded to it.
+ */
+function lifecycleStatus(event: CanonicalEvent, referenceMs: number): EventStatus {
+  if (event.status !== "active") return event.status;
+  const ends = endsAtMs(event);
+  return ends !== null && ends < referenceMs ? "expired" : event.status;
+}
+
 export interface EventQuery {
   center?: LonLat;
   radius_m?: number;
@@ -93,6 +112,26 @@ export interface ResourceQuery {
   status?: OperationalStatus;
 }
 
+/**
+ * Hard ceiling on retained events. A store that only ever grows is an
+ * availability bug waiting for a busy feed day; the sweep evicts the
+ * least-recently-verified records once this is exceeded.
+ */
+export const MAX_EVENTS = 10_000;
+
+/**
+ * Multiple of an event type's freshness budget after which the record is not
+ * merely stale but worthless, and is deleted outright.
+ */
+export const RETENTION_AGE_MULTIPLIER = 4;
+
+export interface SweepResult {
+  /** Active events transitioned to "expired" because their end time passed. */
+  expired: number;
+  /** Events removed entirely (past retention, or evicted by the size cap). */
+  deleted: number;
+}
+
 export interface EventStore {
   upsertEvent(event: CanonicalEvent, sourceRecords: SourceRecord[]): void;
   queryEvents(opts: EventQuery): CanonicalEvent[];
@@ -104,6 +143,11 @@ export interface EventStore {
   allResources(): Resource[];
   /** Subscribe to upserts. Returns an unsubscribe function. */
   onChange(cb: (event: CanonicalEvent) => void): () => void;
+  /**
+   * Expire, prune and cap stored events. Optional on the interface so existing
+   * implementations stay valid; `MemoryStore` implements it.
+   */
+  sweepExpired?(now: Date): SweepResult;
 }
 
 export class MemoryStore implements EventStore {
@@ -142,7 +186,14 @@ export class MemoryStore implements EventStore {
       0,
       (referenceTime - new Date(base.last_verified_at).getTime()) / 1000,
     );
-    const contradictionNote = event.contradiction_note ?? existing?.contradiction_note ?? null;
+
+    // A newer authoritative record wins outright: if it carries no contradiction,
+    // the dispute it previously recorded has been resolved and the stale note
+    // must not survive. An older record can still contribute a note it saw, but
+    // it can never erase one.
+    const contradictionNote = incomingIsNewer
+      ? event.contradiction_note
+      : (event.contradiction_note ?? existing?.contradiction_note ?? null);
 
     const score = computeConfidence({
       tier: bestTier,
@@ -161,10 +212,28 @@ export class MemoryStore implements EventStore {
       confidence_score: score,
       confidence_label: confidenceLabel(score, bestTier),
       contradiction_note: contradictionNote,
+      status: lifecycleStatus(base, referenceTime),
     };
 
     this.events.set(next.event_id, next);
-    for (const listener of this.listeners) listener(next);
+    this.emit(next);
+  }
+
+  /**
+   * Notify subscribers. Each listener is isolated: a subscriber that throws
+   * must not abort the upsert or starve the listeners registered after it.
+   */
+  private emit(event: CanonicalEvent): void {
+    for (const listener of this.listeners) {
+      try {
+        listener(event);
+      } catch (error) {
+        console.error(
+          `MemoryStore: onChange listener threw for event ${event.event_id}`,
+          error,
+        );
+      }
+    }
   }
 
   /**
@@ -187,6 +256,12 @@ export class MemoryStore implements EventStore {
     const radius = opts.radius_m ?? Infinity;
 
     const matched = [...this.events.values()].filter((event) => {
+      // An event whose end time has passed is never returned, even if a sweep
+      // has not yet run and its stored status still reads "active". Serving a
+      // finished hazard as current is the failure this guards against; callers
+      // that want history use allEvents()/getEvent().
+      const ends = endsAtMs(event);
+      if (ends !== null && ends < opts.now.getTime()) return false;
       if (statuses.length > 0 && !statuses.includes(event.status)) return false;
       if (opts.types && opts.types.length > 0 && !opts.types.includes(event.event_type)) {
         return false;
@@ -249,5 +324,63 @@ export class MemoryStore implements EventStore {
     return () => {
       this.listeners.delete(cb);
     };
+  }
+
+  /**
+   * Age out the event table. Idempotent; safe to run on a timer.
+   *
+   * 1. Active events whose `ends_at` has passed become "expired". They stay
+   *    queryable by id, so a user who was told about a hazard can still see
+   *    what became of it.
+   * 2. Events not re-verified for RETENTION_AGE_MULTIPLIER × their freshness
+   *    budget are deleted along with their source-record bucket — well past
+   *    stale, they are no longer evidence of anything.
+   * 3. If the table still exceeds MAX_EVENTS, the least-recently-verified
+   *    records are evicted until it fits.
+   */
+  sweepExpired(now: Date): SweepResult {
+    const nowMs = now.getTime();
+    let expired = 0;
+    let deleted = 0;
+
+    for (const [id, event] of this.events) {
+      const next = lifecycleStatus(event, nowMs);
+      if (next !== event.status) {
+        this.events.set(id, { ...event, status: next });
+        expired++;
+      }
+    }
+
+    for (const [id, event] of [...this.events]) {
+      const retentionSeconds = RETENTION_AGE_MULTIPLIER * eventMaxAge(event.event_type);
+      const verifiedMs = new Date(event.last_verified_at).getTime();
+      if (!Number.isFinite(verifiedMs)) continue;
+      // Plain arithmetic rather than ageSeconds(): a future-dated record must
+      // read as "not yet old", not as the infinite-age staleness sentinel.
+      if ((nowMs - verifiedMs) / 1000 > retentionSeconds) {
+        this.deleteEvent(id);
+        deleted++;
+      }
+    }
+
+    if (this.events.size > MAX_EVENTS) {
+      const oldestFirst = [...this.events.values()].sort(
+        (a, b) =>
+          new Date(a.last_verified_at).getTime() - new Date(b.last_verified_at).getTime(),
+      );
+      const excess = this.events.size - MAX_EVENTS;
+      for (let i = 0; i < excess; i++) {
+        this.deleteEvent(oldestFirst[i]!.event_id);
+        deleted++;
+      }
+    }
+
+    return { expired, deleted };
+  }
+
+  /** Drop an event and the provenance bucket that belongs to it. */
+  private deleteEvent(id: string): void {
+    this.events.delete(id);
+    this.records.delete(id);
   }
 }

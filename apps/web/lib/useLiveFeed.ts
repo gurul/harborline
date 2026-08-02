@@ -2,7 +2,13 @@
 
 import { useEffect, useState } from "react";
 import { useQuery, useQueryClient, type QueryKey } from "@tanstack/react-query";
-import { SEVERITY_RANK, type CanonicalEvent } from "@harborline/event-schema";
+import {
+  SEVERITY_RANK,
+  geometryCentroid,
+  haversineMeters,
+  type CanonicalEvent,
+  type LonLat,
+} from "@harborline/event-schema";
 import {
   DEFAULT_RADIUS_M,
   STREAM_URL,
@@ -36,6 +42,24 @@ export function sortEvents(events: CanonicalEvent[]): CanonicalEvent[] {
       new Date(b.last_verified_at).getTime() - new Date(a.last_verified_at).getTime()
     );
   });
+}
+
+/**
+ * The stream is not radius-scoped, but every cache entry is. Without this an
+ * event 60 km away lands in a 5 km-filtered list. Geometry we cannot place is
+ * treated as out of range — the next refetch is authoritative either way.
+ */
+function withinRadius(
+  event: CanonicalEvent,
+  anchor: LonLat,
+  radiusM: number,
+): boolean {
+  if (!event.geometry) return false;
+  try {
+    return haversineMeters(anchor, geometryCentroid(event.geometry)) <= radiusM;
+  } catch {
+    return false;
+  }
 }
 
 function mergeEvent(
@@ -193,9 +217,14 @@ export function useLiveFeed(options: LiveFeedOptions): LiveFeed {
   useEffect(() => {
     if (!subscribe || typeof window === "undefined") return;
     const key = JSON.parse(keySignature) as QueryKey;
+    // Anchor from the key itself, so the distance test uses exactly the
+    // rounded lat/lon/radius this cache entry was fetched for.
+    const [, keyLat, keyLon, keyRadiusM] = key as [string, string, string, number];
+    const anchor: LonLat = [Number(keyLon), Number(keyLat)];
     return subscribeToStream(
       STREAM_URL,
       (incoming) => {
+        if (!withinRadius(incoming, anchor, keyRadiusM)) return;
         queryClient.setQueryData<EventsResponse>(key, (previous) =>
           mergeEvent(previous, incoming),
         );

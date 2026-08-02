@@ -15,15 +15,26 @@ import {
 } from "@harborline/event-schema";
 import { tools } from "@harborline/agent-tools";
 import { store } from "../state.js";
+import {
+  invalidQueryMessage,
+  issueSummary,
+  latParam,
+  limitParam,
+  lonParam,
+  radiusParam,
+} from "../validation.js";
 
 export const DEFAULT_RADIUS_M = 5000;
+export const DEFAULT_LIMIT = 100;
+export const MAX_LIMIT = 200;
 
 const ResourcesQuerySchema = z.object({
-  lat: z.coerce.number().min(-90).max(90),
-  lon: z.coerce.number().min(-180).max(180),
-  radius_m: z.coerce.number().positive().max(200_000).optional(),
+  lat: latParam(),
+  lon: lonParam(),
+  radius_m: radiusParam(),
   type: ResourceTypeSchema.optional(),
   status: OperationalStatusSchema.optional(),
+  limit: limitParam(DEFAULT_LIMIT, MAX_LIMIT),
 });
 
 export const resourcesRoutes = new Hono();
@@ -35,13 +46,16 @@ resourcesRoutes.get("/", (c) => {
     radius_m: c.req.query("radius_m"),
     type: c.req.query("type"),
     status: c.req.query("status"),
+    limit: c.req.query("limit"),
   });
   if (!parsed.success) {
     return c.json(
       {
         error: "invalid_query",
-        message: "`lat` and `lon` are required.",
-        issues: parsed.error.issues,
+        // Name the fields that actually failed — a bad `type` must not be
+        // reported as a missing coordinate.
+        message: invalidQueryMessage(parsed.error),
+        issues: issueSummary(parsed.error),
       },
       400,
     );
@@ -55,7 +69,7 @@ resourcesRoutes.get("/", (c) => {
     status: parsed.data.status,
   });
 
-  return c.json({ resources });
+  return c.json({ resources: resources.slice(0, parsed.data.limit) });
 });
 
 resourcesRoutes.get("/:id", (c) => {

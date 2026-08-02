@@ -40,6 +40,17 @@ const ENDPOINT_MARGIN_M = 40;
 /** Point-in-geometry buffer, in meters. */
 export const HAZARD_BUFFER_M = 30;
 
+/**
+ * Maximum distance a request point may sit from the nearest graph node.
+ *
+ * The lattice covers a few square kilometres of Capitol Hill. Snapping a point
+ * from outside it to whichever node happens to be least far away produces a
+ * route through streets the user is nowhere near — and, worse, a hazard
+ * assessment of those streets rather than theirs. Beyond this radius the honest
+ * answer is that the demonstration graph cannot route the request.
+ */
+export const MAX_SNAP_M = 1500;
+
 const MAX_ALTERNATIVES = 4;
 const PENALTY_FACTOR = 1.6;
 const RECOMMENDATION_TTL_MS = 10 * 60 * 1000;
@@ -96,7 +107,12 @@ function buildAdjacency(graph: RoadGraph): Map<string, AdjacencyEntry[]> {
   return adjacency;
 }
 
-function nearestNode(graph: RoadGraph, pt: LonLat): string {
+interface Snap {
+  id: string;
+  distance_m: number;
+}
+
+function nearestNode(graph: RoadGraph, pt: LonLat): Snap {
   let bestId = graph.nodes[0]?.id ?? "";
   let bestDistance = Infinity;
   for (const node of graph.nodes) {
@@ -106,7 +122,7 @@ function nearestNode(graph: RoadGraph, pt: LonLat): string {
       bestId = node.id;
     }
   }
-  return bestId;
+  return { id: bestId, distance_m: bestDistance };
 }
 
 /**
@@ -225,16 +241,22 @@ function noPathCandidate(from: LonLat, to: LonLat): RouteCandidate {
 
 export function calculateRoutes(input: RouteInput, graph: RoadGraph = seattleGraph): RouteResult {
   const adjacency = buildAdjacency(graph);
-  const startNode = nearestNode(graph, input.from);
-  const goalNode = nearestNode(graph, input.to);
+  const start = nearestNode(graph, input.from);
+  const goal = nearestNode(graph, input.to);
   const activeEvents = input.events.filter((e) => e.status === "active");
+
+  // Off-graph request: refuse rather than route someone through a
+  // neighbourhood they are not in.
+  if (start.distance_m > MAX_SNAP_M || goal.distance_m > MAX_SNAP_M) {
+    return { candidates: [noPathCandidate(input.from, input.to)], best: null };
+  }
 
   const penalties = new Map<string, number>();
   const candidates: RouteCandidate[] = [];
   const seen = new Set<string>();
 
   for (let i = 0; i < MAX_ALTERNATIVES; i++) {
-    const path = dijkstra(adjacency, startNode, goalNode, penalties);
+    const path = dijkstra(adjacency, start.id, goal.id, penalties);
     if (path === null) break;
 
     const signature = path.map((e) => e.edgeKey).join(">");
@@ -292,7 +314,21 @@ function scorePath(
   let eliminated = false;
   let rejectedReason: RouteCandidate["rejected_reason"] = null;
 
-  for (const entry of path) {
+  /**
+   * Segments to hazard-check.
+   *
+   * When start and goal snap to the same node the Dijkstra path is empty, but
+   * the user still has to walk the straight line between the two points. That
+   * line gets the same sampling as any edge — otherwise a short trip that
+   * crosses a closure would be reported hazard-free purely because the router
+   * had no edges to inspect.
+   */
+  const checked: { geometry: LonLat[]; length_m: number }[] =
+    path.length > 0
+      ? path.map((entry) => ({ geometry: entry.geometry, length_m: entry.length_m }))
+      : [{ geometry: coordinates, length_m: distance }];
+
+  for (const entry of checked) {
     let edgeHazardCounted = false;
     for (const event of events) {
       if (!edgeIntersectsEvent(entry.geometry, event)) continue;

@@ -33,8 +33,31 @@ export const FRESHNESS_POLICY: {
   },
 };
 
+/**
+ * Tolerance, in seconds, for a `last_verified_at` that sits ahead of `now`.
+ *
+ * Small forward skew is normal: upstream feeds stamp records from their own
+ * clocks, and a request can be served a few seconds before a timestamp the
+ * publisher already wrote. 10 minutes absorbs that without letting it become a
+ * loophole.
+ */
+export const MAX_FUTURE_SKEW_SECONDS = 600;
+
+/**
+ * Age of a record in seconds, floored at 0.
+ *
+ * A timestamp more than MAX_FUTURE_SKEW_SECONDS ahead of `now` returns
+ * POSITIVE_INFINITY, which makes the record maximally stale. Without this, a
+ * clock-skewed or attacker-supplied future timestamp would clamp to age 0 and
+ * be treated as permanently fresh — the record could never expire, could never
+ * be excluded from a recommendation, and would always outrank correctly
+ * stamped records. Failing stale is the safe direction: the record is still
+ * displayed with its age, it just cannot back a current-status claim.
+ */
 export function ageSeconds(lastVerifiedAt: string, now: Date): number {
-  return Math.max(0, (now.getTime() - new Date(lastVerifiedAt).getTime()) / 1000);
+  const deltaSeconds = (now.getTime() - new Date(lastVerifiedAt).getTime()) / 1000;
+  if (deltaSeconds < -MAX_FUTURE_SKEW_SECONDS) return Number.POSITIVE_INFINITY;
+  return Math.max(0, deltaSeconds);
 }
 
 export function isStale(
@@ -56,6 +79,8 @@ export function resourceMaxAge(resourceType: ResourceType): number {
 /** Human-readable age, e.g. "8 min ago", "2 h ago". */
 export function formatAge(lastVerifiedAt: string, now: Date): string {
   const s = ageSeconds(lastVerifiedAt, now);
+  // Guard the future-skew sentinel so it never renders as "Infinity d ago".
+  if (!Number.isFinite(s)) return "timestamp not usable (source clock ahead)";
   if (s < 60) return "just now";
   if (s < 3600) return `${Math.round(s / 60)} min ago`;
   if (s < 86400) return `${Math.round(s / 3600)} h ago`;

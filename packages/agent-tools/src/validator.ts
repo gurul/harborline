@@ -50,14 +50,17 @@ const NO_DATA_DISCLAIMER = /no verified (reports?|records?|data)/i;
 const RESOURCE_CLAIM_WORDS = new Set(["open", "closed", "full", "capacity", "operating"]);
 const ROAD_CLAIM_WORDS = new Set(["blocked", "closed"]);
 
-const ROAD_EVENT_TYPES = new Set([
-  "road_closure",
-  "evacuation_order",
-  "flood",
-  "landslide",
-  "fire",
-]);
 const SHELTER_EVENT_TYPES = new Set(["shelter_open", "shelter_full"]);
+
+/**
+ * Rule 6 — a phone number the answer states must come from the evidence.
+ * Deliberately loose: it over-matches digit runs, and every match is then
+ * checked against the bundle, so over-matching costs nothing.
+ */
+const PHONE_LIKE = /\+?\d[\d\s().-]{7,}\d/g;
+
+/** Rule 6 — a street address the answer states must come from the evidence. */
+const STREET_ADDRESS_LIKE = /\b\d{2,5}\s+[A-Z][a-z]+ (St|Ave|Blvd|Rd|Way|Dr|Pl)\b/g;
 
 function allResources(evidence: EvidenceBundle): NearbyResource[] {
   return [
@@ -109,8 +112,19 @@ export function validateResponse(
   const hasResourceEvidence =
     resources.length > 0 ||
     evidence.events.some((e) => SHELTER_EVENT_TYPES.has(e.event_type));
-  const hasRoadEvidence =
-    evidence.events.some((e) => ROAD_EVENT_TYPES.has(e.event_type)) || resources.length > 0;
+  /**
+   * ANY event in the bundle is operational evidence for a road/blockage claim.
+   *
+   * The previous allowlist covered only five event types, so an answer built
+   * over a weather_warning, earthquake, power_outage or transit_disruption had
+   * no road evidence at all — and the composer quotes upstream headlines,
+   * descriptions and official instructions verbatim. A routine NWS instruction
+   * like "Roads are closed east of Broadway" therefore tripped
+   * operational_claim_unsupported on deterministic output that was, in fact,
+   * fully grounded. Rule 1 exists to catch invented claims; an event the bundle
+   * actually contains is not invented, whatever its type.
+   */
+  const hasRoadEvidence = evidence.events.length > 0 || resources.length > 0;
 
   // --- Rule 1: operational claims need matching evidence + attribution ------
   const claimWords = new Set(
@@ -192,5 +206,45 @@ export function validateResponse(
     }
   }
 
+  // --- Rule 6: LLM-stated entities must be grounded in the bundle -----------
+  // Prompt-injection hardening. A poisoned upstream field can talk the model
+  // into emitting a phone number or address that is not in the evidence — the
+  // highest-harm output this system can produce, because a person will act on
+  // it. The deterministic composer only ever copies these out of records, so it
+  // is exempt; anything the model originated is checked against the bundle.
+  if (response.composed_by === "llm") {
+    violations.push(...ungroundedEntityViolations(text, evidence));
+  }
+
   return { ok: violations.length === 0, violations };
+}
+
+/**
+ * Phone- and address-shaped strings in `text` that do not appear verbatim in
+ * the serialized evidence bundle.
+ */
+function ungroundedEntityViolations(
+  text: string,
+  evidence: EvidenceBundle,
+): string[] {
+  const haystack = JSON.stringify(evidence) ?? "";
+  const violations: string[] = [];
+  const reported = new Set<string>();
+
+  const check = (pattern: RegExp, kind: string) => {
+    for (const match of text.matchAll(pattern)) {
+      const value = match[0].trim();
+      if (value === "" || reported.has(value)) continue;
+      if (haystack.includes(value)) continue;
+      reported.add(value);
+      violations.push(
+        `ungrounded_entity: answer states a ${kind} ("${value}") that appears nowhere in the evidence bundle`,
+      );
+    }
+  };
+
+  check(PHONE_LIKE, "phone number");
+  check(STREET_ADDRESS_LIKE, "street address");
+
+  return violations;
 }

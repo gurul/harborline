@@ -1,9 +1,15 @@
 import { z } from "zod";
 
 /** Minimal GeoJSON geometry schemas — the only geometry shapes Harborline stores. */
+
+/** Longitude, degrees. Rejects out-of-range values from upstream feeds. */
+export const LongitudeSchema = z.number().min(-180).max(180);
+/** Latitude, degrees. */
+export const LatitudeSchema = z.number().min(-90).max(90);
+
 export const PointSchema = z.object({
   type: z.literal("Point"),
-  coordinates: z.tuple([z.number(), z.number()]), // [lon, lat]
+  coordinates: z.tuple([LongitudeSchema, LatitudeSchema]), // [lon, lat]
 });
 
 export const LineStringSchema = z.object({

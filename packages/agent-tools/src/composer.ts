@@ -23,6 +23,7 @@ import {
   resourceMaxAge,
 } from "@harborline/event-schema";
 import { planQuery, type QueryIntent } from "./planner.js";
+import { HAZARD_EVENT_TYPES } from "./tools.js";
 
 /** Fraction of the freshness budget past which a record is "aging". */
 export const NEAR_STALE_RATIO = 0.75;
@@ -327,7 +328,7 @@ function composeRoadsToAvoid(
   now: Date,
 ): string[] {
   const relevant = evidence.events.filter((e) =>
-    ["road_closure", "evacuation_order", "flood", "landslide", "fire"].includes(e.event_type),
+    HAZARD_EVENT_TYPES.includes(e.event_type),
   );
   if (relevant.length === 0) {
     return [

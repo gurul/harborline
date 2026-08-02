@@ -3,12 +3,21 @@
  *
  * One self-rescheduling timer chain per connector (a `setTimeout` chain rather
  * than `setInterval`, so a slow fetch cannot stack runs or drift the cadence).
- * Failures never throw — connectors return `{ ok: false }` — so the only thing
- * this module has to decide is when to try again:
+ * A failed fetch — whether the connector returns `{ ok: false }` or throws —
+ * only has to decide when to try again:
  *
- *   - exponential backoff, doubling per consecutive failure, capped at 300s
- *   - circuit breaker after 3 consecutive failures: the circuit opens and only
- *     a half-open probe every 300s is attempted until one succeeds
+ *   - Backoff is `base × 2^consecutive_failures`, capped at 300s. Because the
+ *     circuit opens at the 3rd consecutive failure, the backoff path is only
+ *     ever walked for failures 1 and 2: in practice `base × 2` then `base × 4`.
+ *   - From the 3rd consecutive failure the circuit is open and the chain
+ *     switches to a fixed half-open probe every 300s until one fetch succeeds,
+ *     which resets the failure count and the circuit together.
+ *
+ * The chain is unconditionally rescheduled after every attempt, so no failure
+ * mode — including a throwing store listener — can silently end polling.
+ *
+ * A separate 5-minute sweep expires and prunes stored events, so a long-running
+ * process does not accumulate events past their retention window.
  *
  * Health is observable per source via `getSourceHealth()`.
  */
@@ -26,6 +35,8 @@ import { store as defaultStore } from "./state.js";
 export const BACKOFF_CAP_SECONDS = 300;
 export const CIRCUIT_FAILURE_THRESHOLD = 3;
 export const HALF_OPEN_RETRY_SECONDS = 300;
+/** How often expired events are swept out of the store. */
+export const SWEEP_INTERVAL_MS = 5 * 60 * 1000;
 
 interface ConnectorState {
   connector: Connector;
@@ -35,6 +46,7 @@ interface ConnectorState {
 }
 
 const states = new Map<string, ConnectorState>();
+let sweepTimer: ReturnType<typeof setInterval> | null = null;
 
 function initialHealth(connector: Connector): SourceHealth {
   return {
@@ -85,34 +97,42 @@ function errorMessage(err: unknown): string {
   return err instanceof Error ? err.message : String(err);
 }
 
+/** Fold a failed attempt into the connector's health. */
+function recordFailure(state: ConnectorState, error: string): boolean {
+  // The full error text stays here, in the log. `/v1/health` publishes only a
+  // coarse category, so upstream URLs and credentials never leave the process.
+  console.warn(`[scheduler] ${state.connector.id} fetch failed: ${error}`);
+  state.health.healthy = false;
+  state.health.last_error = error;
+  state.health.consecutive_failures += 1;
+  if (state.health.consecutive_failures >= CIRCUIT_FAILURE_THRESHOLD) {
+    state.health.circuit_open = true;
+  }
+  return false;
+}
+
 /** Run one fetch and fold the outcome into the connector's health. */
 async function runOnce(state: ConnectorState, target: EventStore): Promise<boolean> {
   const now = new Date();
-  let result: ConnectorResult;
   try {
-    result = await state.connector.fetch(now);
-  } catch (err) {
-    // A connector should never throw. If one does, treat it as a failed fetch.
-    result = { ok: false, retrieved_at: now.toISOString(), error: errorMessage(err) };
-  }
+    const result: ConnectorResult = await state.connector.fetch(now);
+    if (!result.ok) return recordFailure(state, result.error);
 
-  if (result.ok) {
+    // Inside the try on purpose: `applyItems` fans out to store listeners
+    // (the SSE feed), and a listener that throws is a failed ingest — not a
+    // reason to kill this connector's timer chain.
     applyItems(target, result);
+
     state.health.healthy = true;
     state.health.last_success_at = result.retrieved_at;
     state.health.last_error = null;
     state.health.consecutive_failures = 0;
     state.health.circuit_open = false;
     return true;
+  } catch (err) {
+    // A connector should never throw. If one does, treat it as a failed fetch.
+    return recordFailure(state, errorMessage(err));
   }
-
-  state.health.healthy = false;
-  state.health.last_error = result.error;
-  state.health.consecutive_failures += 1;
-  if (state.health.consecutive_failures >= CIRCUIT_FAILURE_THRESHOLD) {
-    state.health.circuit_open = true;
-  }
-  return false;
 }
 
 /** Seconds to wait before the next attempt, given the current health. */
@@ -141,9 +161,37 @@ function schedule(state: ConnectorState, target: EventStore, delaySeconds: numbe
 async function tick(state: ConnectorState, target: EventStore): Promise<void> {
   if (state.stopped) return;
   const startedAt = Date.now();
-  await runOnce(state, target);
-  const elapsedSeconds = (Date.now() - startedAt) / 1000;
-  schedule(state, target, nextDelaySeconds(state, elapsedSeconds));
+  try {
+    await runOnce(state, target);
+  } finally {
+    // Rescheduling in `finally` is what makes the chain unkillable: even if
+    // `runOnce` somehow escapes with an exception, the next attempt is armed.
+    const elapsedSeconds = (Date.now() - startedAt) / 1000;
+    schedule(state, target, nextDelaySeconds(state, elapsedSeconds));
+  }
+}
+
+/**
+ * Periodically expire and prune stored events. Optional on the `EventStore`
+ * interface, so a store without it simply never sweeps.
+ */
+function startSweep(target: EventStore): void {
+  if (sweepTimer) return;
+  const timer = setInterval(() => {
+    try {
+      const result = target.sweepExpired?.(new Date());
+      if (result && (result.expired > 0 || result.deleted > 0)) {
+        console.log(
+          `[scheduler] store sweep: expired=${result.expired} deleted=${result.deleted}`,
+        );
+      }
+    } catch (err) {
+      console.warn(`[scheduler] store sweep failed: ${errorMessage(err)}`);
+    }
+  }, SWEEP_INTERVAL_MS);
+  // Housekeeping must never be the reason the process stays alive.
+  timer.unref?.();
+  sweepTimer = timer;
 }
 
 export interface SchedulerOptions {
@@ -167,30 +215,50 @@ export async function startScheduler(opts: SchedulerOptions): Promise<SchedulerS
   const target = opts.store ?? defaultStore;
   const live = opts.connectors ?? allConnectors({ demoMode: false });
 
+  // Restart-safe: `stopScheduler` latches `stopped`, which would make every
+  // retained state refuse to schedule. Clear it before arming anything.
+  for (const state of states.values()) {
+    state.stopped = false;
+  }
+
   let demoLoaded = false;
   if (opts.demoMode) {
-    const demoState: ConnectorState = {
-      connector: demoConnector,
-      health: initialHealth(demoConnector),
-      timer: null,
-      stopped: false,
-    };
-    states.set(demoConnector.id, demoState);
+    // Reuse any retained demo state rather than replacing it — overwriting
+    // would orphan the previous state's health history and in-flight timer.
+    let demoState = states.get(demoConnector.id);
+    if (!demoState) {
+      demoState = {
+        connector: demoConnector,
+        health: initialHealth(demoConnector),
+        timer: null,
+        stopped: false,
+      };
+      states.set(demoConnector.id, demoState);
+    }
     demoLoaded = await runOnce(demoState, target);
   }
 
   for (const connector of live) {
-    if (states.has(connector.id)) continue;
-    const state: ConnectorState = {
-      connector,
-      health: initialHealth(connector),
-      timer: null,
-      stopped: false,
-    };
-    states.set(connector.id, state);
+    let state = states.get(connector.id);
+    if (!state) {
+      state = {
+        connector,
+        health: initialHealth(connector),
+        timer: null,
+        stopped: false,
+      };
+      states.set(connector.id, state);
+    } else if (state.timer) {
+      // Re-arming a state that already holds a timer: drop the old one first
+      // so the connector does not end up with two chains.
+      clearTimeout(state.timer);
+      state.timer = null;
+    }
     // First run is immediate; the chain reschedules itself thereafter.
     schedule(state, target, 0);
   }
+
+  startSweep(target);
 
   return { demo_loaded: demoLoaded, live_connector_ids: live.map((c) => c.id) };
 }
@@ -201,6 +269,10 @@ export function stopScheduler(): void {
     state.stopped = true;
     if (state.timer) clearTimeout(state.timer);
     state.timer = null;
+  }
+  if (sweepTimer) {
+    clearInterval(sweepTimer);
+    sweepTimer = null;
   }
 }
 

@@ -138,17 +138,29 @@ function accessibilityFeatures(attrs: Attributes): string[] {
   return features;
 }
 
+/**
+ * ArcGIS layers occasionally serve Web Mercator meters (or plain garbage) in a
+ * field that is nominally lon/lat. Validated here rather than downstream so an
+ * out-of-range coordinate skips one shelter instead of throwing on parse.
+ */
+function asLonLat(lon: unknown, lat: unknown): { lon: number; lat: number } | null {
+  if (typeof lon !== "number" || typeof lat !== "number") return null;
+  if (!Number.isFinite(lon) || !Number.isFinite(lat)) return null;
+  if (lon < -180 || lon > 180 || lat < -90 || lat > 90) return null;
+  return { lon, lat };
+}
+
 function coordinatesOf(feature: z.infer<typeof FemaFeatureSchema>, attrs: Attributes) {
   const coords = feature.geometry?.coordinates;
   if (coords && coords.length >= 2) {
-    return { lon: coords[0]!, lat: coords[1]! };
+    return asLonLat(coords[0], coords[1]);
   }
   const x = feature.geometry?.x;
   const y = feature.geometry?.y;
-  if (typeof x === "number" && typeof y === "number") return { lon: x, lat: y };
+  if (typeof x === "number" && typeof y === "number") return asLonLat(x, y);
   const lon = pickNumber(attrs, ["longitude", "lon", "x", "long"]);
   const lat = pickNumber(attrs, ["latitude", "lat", "y"]);
-  if (lon !== null && lat !== null) return { lon, lat };
+  if (lon !== null && lat !== null) return asLonLat(lon, lat);
   return null;
 }
 

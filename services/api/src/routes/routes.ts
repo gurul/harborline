@@ -9,13 +9,33 @@
 import { Hono } from "hono";
 import { z } from "zod";
 import { tools } from "@harborline/agent-tools";
+import type { RouteCandidate } from "@harborline/event-schema";
 import { store } from "../state.js";
+import { invalidQueryMessage, issueSummary, latParam, lonParam } from "../validation.js";
+
+/**
+ * Stand-in for an unroutable candidate's risk. The router uses
+ * `Number.POSITIVE_INFINITY`, which `JSON.stringify` emits as `null` — that
+ * breaks the `risk_score: number` contract and reads to a client as "no score
+ * computed" rather than "maximally bad". A finite sentinel keeps the typed
+ * shape honest and still sorts last everywhere.
+ */
+export const UNROUTABLE_RISK_SCORE = Number.MAX_SAFE_INTEGER;
 
 const RoutesQuerySchema = z.object({
-  from_lat: z.coerce.number().min(-90).max(90),
-  from_lon: z.coerce.number().min(-180).max(180),
+  from_lat: latParam(),
+  from_lon: lonParam(),
   to_resource_id: z.string().min(1),
 });
+
+/** Replace non-finite risk scores at the API boundary. */
+export function serializableCandidates(candidates: RouteCandidate[]): RouteCandidate[] {
+  return candidates.map((candidate) =>
+    Number.isFinite(candidate.risk_score)
+      ? candidate
+      : { ...candidate, risk_score: UNROUTABLE_RISK_SCORE },
+  );
+}
 
 export const routesRoutes = new Hono();
 
@@ -29,8 +49,8 @@ routesRoutes.get("/", (c) => {
     return c.json(
       {
         error: "invalid_query",
-        message: "`from_lat`, `from_lon` and `to_resource_id` are required.",
-        issues: parsed.error.issues,
+        message: invalidQueryMessage(parsed.error),
+        issues: issueSummary(parsed.error),
       },
       400,
     );
@@ -49,7 +69,7 @@ routesRoutes.get("/", (c) => {
         error: "no_viable_route",
         message:
           "No route to this destination avoids the reported closures. Contact local emergency services.",
-        candidates: result.candidates,
+        candidates: serializableCandidates(result.candidates),
         destination: result.destination,
         routing: result.routing,
         generated_at: result.generated_at,
@@ -59,7 +79,7 @@ routesRoutes.get("/", (c) => {
   }
 
   return c.json({
-    candidates: result.candidates,
+    candidates: serializableCandidates(result.candidates),
     recommendation: result.recommendation,
     destination: result.destination,
     routing: result.routing,

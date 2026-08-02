@@ -127,7 +127,14 @@ export const nwsConnector: Connector = {
 
         const providerRecordId = props.id ?? feature.id ?? null;
         const eventId = `nws:${providerRecordId ?? stableHashFallback(feature)}`;
-        const sent = toIso(props.sent) ?? toIso(props.effective) ?? retrieved_at;
+
+        // Honest freshness: the alert's own issue time, never our fetch time.
+        // Falling back to retrieved_at would make an undatable alert look
+        // permanently fresh, so an alert we cannot date is dropped — the same
+        // policy the FEMA connector applies to undatable shelters.
+        const sent = toIso(props.sent) ?? toIso(props.effective);
+        if (!sent) continue;
+
         const eventType = mapEventType(props.event);
 
         events.push(

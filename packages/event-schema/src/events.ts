@@ -61,8 +61,19 @@ export const SourceRecordSchema = z.object({
 });
 export type SourceRecord = z.infer<typeof SourceRecordSchema>;
 
+/**
+ * Event identifier. Bounded in length and free of line breaks so an id can be
+ * safely interpolated into a log line, a URL path, or an LLM prompt without
+ * carrying an injected newline with it.
+ */
+export const EventIdSchema = z
+  .string()
+  .min(1)
+  .max(200)
+  .regex(/^[^\r\n]+$/);
+
 export const CanonicalEventSchema = z.object({
-  event_id: z.string(),
+  event_id: EventIdSchema,
   event_type: EventTypeSchema,
   headline: z.string(),
   description: z.string(),

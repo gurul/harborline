@@ -40,6 +40,32 @@ Conventions that hold for every endpoint:
 
 ---
 
+## Limits and safeguards (2026-08-02 hardening pass)
+
+These bounds apply on top of the per-endpoint documentation below. Where an example
+below disagrees with this table, this table wins.
+
+| Boundary | Limit | Behavior when exceeded |
+|---|---|---|
+| Rate limit, all `/v1/*` | 120 req/min per IP (token bucket, first `x-forwarded-for` entry or socket address) | `429 {"error":"rate_limited"}` with `Retry-After` |
+| Rate limit, `POST /v1/assistant/ask` | 6 req/min per IP | `429`, same shape |
+| Request body, `/v1/assistant/*` | 8 KiB | `413 {"error":"payload_too_large"}` |
+| List size, `/v1/events` and `/v1/resources` | `limit` query param — integer 1–200, default 100 | Results sliced after ordering |
+| `lat`/`lon` on `/v1/events` | Must be provided together; blank values (`?lat=`) read as absent, never as `0` | `400` naming the actual failing fields |
+| SSE connections | 200 concurrent | `503 {"error":"too_many_streams"}` |
+| SSE per-connection buffer | 500 pending events | Buffer cleared; one `resync` frame (`{"reason":"buffer_overflow"}`) tells the client to refetch `/v1/events` |
+| Unroutable candidates | `risk_score` is always finite | `no_path` candidates carry `Number.MAX_SAFE_INTEGER`, never `null` |
+| `/v1/health` `last_error` | Redacted to `"timeout" \| "upstream_error" \| "bad_payload" \| null` | Full upstream error text is server-log only |
+| CORS | `ALLOWED_ORIGINS` env (comma-separated, exact match). Unset: localhost-only in dev, deny-all cross-origin in production | No `Access-Control-Allow-Origin` header |
+| Concurrent LLM compositions | 4 in flight | Additional requests get the deterministic composer (same evidence, plainer prose) |
+| Security headers | `secureHeaders` with `default-src 'none'; frame-ancestors 'none'` CSP + `nosniff` on every response | — |
+
+Error bodies for query validation carry `{ "error": "invalid_query", "message": "...",
+"issues": [{ "path": "lat", "code": "invalid_type" }] }` — field paths and Zod codes
+only, never echoed input.
+
+---
+
 ## `GET /v1/health`
 
 Service liveness plus the state of every ingestion source. This is the endpoint to read

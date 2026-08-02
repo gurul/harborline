@@ -18,7 +18,9 @@ import {
   type SourceRecord,
 } from "@harborline/event-schema";
 import {
+  capEvidenceForPrompt,
   composeResponse,
+  HAZARD_EVENT_TYPES,
   llmCompose,
   planQuery,
   tools,
@@ -36,7 +38,28 @@ export const ASSISTANT_RADIUS_M = 8000;
 export const RECENT_WINDOW_MS = 60 * 60 * 1000;
 const LLM_TIMEOUT_MS = 15_000;
 
-const HAZARD_TYPES: EventType[] = ["road_closure", "flood", "evacuation_order"];
+/**
+ * Ceiling on in-flight model calls. Each one holds a socket and a token budget
+ * for up to `LLM_TIMEOUT_MS`; without a cap, a burst that slips past the rate
+ * limiter (multiple client IPs) turns into unbounded upstream concurrency.
+ * Saturation degrades to the deterministic composer rather than queueing —
+ * waiting in line behind four 15s calls is worse than an instant grounded
+ * answer, and the deterministic path is the safety floor anyway.
+ */
+export const MAX_CONCURRENT_LLM = 4;
+let activeLlmCalls = 0;
+
+/** Appended when the answer served did not clear the validator. */
+export const SAFETY_FLAG_NOTE =
+  "Automated safety checks flagged this answer; verify with official sources.";
+
+function appendUncertainty(response: AssistantResponse, note: string): AssistantResponse {
+  const existing = response.uncertainty_note?.trim();
+  return {
+    ...response,
+    uncertainty_note: existing && existing.length > 0 ? `${existing} ${note}` : note,
+  };
+}
 
 function attachRecords(ctx: ToolContext, bundle: EvidenceBundle): EvidenceBundle {
   const records: SourceRecord[] = [];
@@ -88,7 +111,7 @@ export function buildEvidence(
     }
 
     case "roads_to_avoid": {
-      bundle.events = activeEvents(HAZARD_TYPES);
+      bundle.events = activeEvents(HAZARD_EVENT_TYPES);
       break;
     }
 
@@ -133,7 +156,16 @@ assistantRoutes.post("/ask", async (c) => {
 
   const parsed = AssistantAskSchema.safeParse(body);
   if (!parsed.success) {
-    return c.json({ error: "invalid_body", issues: parsed.error.issues }, 400);
+    return c.json(
+      {
+        error: "invalid_body",
+        issues: parsed.error.issues.map((i) => ({
+          path: i.path.map((p) => String(p)).join("."),
+          code: i.code,
+        })),
+      },
+      400,
+    );
   }
 
   const now = new Date();
@@ -144,9 +176,13 @@ assistantRoutes.post("/ask", async (c) => {
 
   let response: AssistantResponse | null = null;
   const apiKey = process.env.ANTHROPIC_API_KEY;
-  if (apiKey) {
+  if (apiKey && activeLlmCalls < MAX_CONCURRENT_LLM) {
+    activeLlmCalls += 1;
     try {
-      response = await llmCompose(parsed.data.question, evidence, {
+      // Only the prompt sees the capped bundle. Sources, freshness and evidence
+      // IDs below are still derived from the full one, so capping can never
+      // drop provenance from what the user is shown.
+      response = await llmCompose(parsed.data.question, capEvidenceForPrompt(evidence), {
         apiKey,
         model: process.env.ANTHROPIC_MODEL,
         signal: AbortSignal.timeout(LLM_TIMEOUT_MS),
@@ -158,7 +194,13 @@ assistantRoutes.post("/ask", async (c) => {
         }`,
       );
       response = null;
+    } finally {
+      activeLlmCalls -= 1;
     }
+  } else if (apiKey) {
+    console.warn(
+      `[assistant] llmCompose saturated (${activeLlmCalls}/${MAX_CONCURRENT_LLM} in flight), using deterministic composer`,
+    );
   }
 
   if (response) {
@@ -170,23 +212,33 @@ assistantRoutes.post("/ask", async (c) => {
   }
 
   if (!response) {
-    response = composeResponse(parsed.data.question, evidence, now);
-    const check = validateResponse(response, evidence, now);
-    if (!check.ok) {
-      // The deterministic composer is built to pass. Reaching here is a bug in
-      // the composer or the validator — surface it rather than answering.
-      console.error(
-        `[assistant] BUG: deterministic answer failed validation: ${check.violations.join("; ")}`,
-      );
+    let deterministic: AssistantResponse;
+    try {
+      deterministic = composeResponse(parsed.data.question, evidence, now);
+    } catch (err) {
+      // A throwing composer means there is no answer to serve at all.
+      console.error("[assistant] deterministic composer threw:", err);
       return c.json(
         {
           error: "unsafe_response",
           message: "Could not produce an answer that satisfies the safety policy.",
-          violations: check.violations,
         },
         500,
       );
     }
+
+    const check = validateResponse(deterministic, evidence, now);
+    if (!check.ok) {
+      // The deterministic composer is built to pass, so this is a bug in the
+      // composer or the validator — but withholding the answer is the worse
+      // failure during an emergency. Serve the grounded response (it is built
+      // only from store records) and flag it, loudly, in the log.
+      console.error(
+        `[assistant] BUG: deterministic answer failed validation: ${check.violations.join("; ")}`,
+      );
+      deterministic = appendUncertainty(deterministic, SAFETY_FLAG_NOTE);
+    }
+    response = deterministic;
   }
 
   return c.json(response);

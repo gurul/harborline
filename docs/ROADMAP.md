@@ -205,6 +205,8 @@ connectors, tier assignments, and geography.
 | **Linter (Biome)** | none needed; `npm run check` runs `tsc --noEmit` today | More than one regular contributor — style drift only costs something when it is other people's style |
 | **Observability (OpenTelemetry, Grafana, Sentry)** | `/v1/health` and structured logs today | Deployment beyond localhost; a pilot serving ~100 users does not need a metrics pipeline |
 | **Confidence calibration** | `computeConfidence` factor weights are isolated and pure | Enough outcome-labelled historical events to fit against. Until then the score stays internal and users see only ordinal labels |
-| **Rate limiting / auth on the API** | Hono middleware slot | Any deployment reachable from outside localhost |
+| **Auth on the API** | Hono middleware slot (per-IP rate limiting shipped in the 2026-08-02 hardening pass) | Any deployment with per-user state |
+| **Cross-provider event dedup in the ingest path** | `dedupKey`/`mergeEvents` are exported from `@harborline/connectors` and covered by evals; ingest currently keys on `event_id` only | A second live source reporting the same hazard class as an existing one (e.g. adding a WSDOT closures connector alongside NWS) |
+| **Prompt-size bound on `raw_payload`** | `capEvidenceForPrompt` caps events/resources/descriptions; `source_records.raw_payload` is still unbounded | Before any tier C–E source whose payloads are not government-schema JSON is added |
 | **Container images and deployment manifests** | `infrastructure/` | A hosting target. `docker-compose.yml` covers local dependencies only — see [infrastructure/README.md](../infrastructure/README.md) |
 | **Additional connectors** (Seattle City Light outages, King County Metro, WSDOT) | the `Connector` interface; see [RUNBOOK.md](./RUNBOOK.md#adding-a-connector) | Each is small and independent — add when a demo or user need calls for that hazard class |

@@ -19,3 +19,19 @@ export function isDemoMode(): boolean {
   const raw = process.env.DEMO_MODE;
   return raw === undefined || raw === "" || raw === "1";
 }
+
+/**
+ * Shutdown latch. Long-lived handlers (the SSE loop) poll this so they can
+ * close on their own terms instead of being severed mid-frame by `server.close`
+ * or the shutdown timeout. Lives here rather than in `index.ts` so `routes/`
+ * can read it without importing the module that imports them.
+ */
+let draining = false;
+
+export function setDraining(value: boolean): void {
+  draining = value;
+}
+
+export function isDraining(): boolean {
+  return draining;
+}

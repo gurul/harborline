@@ -32,6 +32,21 @@ export function hashContent(s: string): string {
   return mixed.toString(16).padStart(8, "0");
 }
 
+/**
+ * Epoch values whose magnitude is below this are seconds, at or above are
+ * milliseconds. 1e11 ms is 1973-03-03 and 1e11 s is year 5138 — no real feed
+ * timestamp is ambiguous across that boundary.
+ */
+const EPOCH_MS_THRESHOLD = 1e11;
+
+/** Epoch number (seconds or milliseconds) → ISO string, or null when unusable. */
+function epochToIso(value: number): string | null {
+  if (!Number.isFinite(value)) return null;
+  const ms = Math.abs(value) < EPOCH_MS_THRESHOLD ? value * 1000 : value;
+  const d = new Date(ms);
+  return Number.isNaN(d.getTime()) ? null : d.toISOString();
+}
+
 /** ISO string, or null when the input is not a usable timestamp. */
 export function toIso(value: unknown): string | null {
   if (value == null) return null;
@@ -39,18 +54,15 @@ export function toIso(value: unknown): string | null {
     return Number.isNaN(value.getTime()) ? null : value.toISOString();
   }
   if (typeof value === "number") {
-    if (!Number.isFinite(value)) return null;
-    // ArcGIS / USGS emit epoch milliseconds.
-    const d = new Date(value);
-    return Number.isNaN(d.getTime()) ? null : d.toISOString();
+    // ArcGIS / USGS emit epoch milliseconds; some layers emit epoch seconds.
+    return epochToIso(value);
   }
   if (typeof value === "string") {
     const trimmed = value.trim();
     if (trimmed === "") return null;
-    // Numeric strings are epoch milliseconds.
+    // Numeric strings are epoch stamps (seconds or milliseconds).
     if (/^\d{10,}$/.test(trimmed)) {
-      const d = new Date(Number(trimmed));
-      return Number.isNaN(d.getTime()) ? null : d.toISOString();
+      return epochToIso(Number(trimmed));
     }
     const d = new Date(trimmed);
     return Number.isNaN(d.getTime()) ? null : d.toISOString();
@@ -171,7 +183,62 @@ export interface FetchJsonOptions {
   timeoutMs?: number;
 }
 
-/** GET JSON with a hard timeout. Throws on network error or non-2xx. */
+/**
+ * Hard ceiling on an upstream response body. Every feed we read is a few MB at
+ * most; anything larger is a misconfigured layer or a hostile endpoint, and we
+ * refuse it before it reaches JSON.parse.
+ */
+export const MAX_RESPONSE_BYTES = 32 * 1024 * 1024;
+
+/**
+ * Read a response body as text while counting bytes, aborting past the cap.
+ * The cap is enforced on raw bytes so an oversized body is never fully
+ * buffered, let alone parsed.
+ */
+async function readBoundedText(response: Response, url: string): Promise<string> {
+  const body = response.body;
+  if (!body) {
+    // No stream available (empty body, or a runtime that does not expose one).
+    const text = await response.text();
+    if (new TextEncoder().encode(text).byteLength > MAX_RESPONSE_BYTES) {
+      throw new Error(
+        `response body exceeds ${MAX_RESPONSE_BYTES} bytes for ${url}`,
+      );
+    }
+    return text;
+  }
+
+  const reader = body.getReader();
+  const decoder = new TextDecoder();
+  const chunks: string[] = [];
+  let received = 0;
+  try {
+    for (;;) {
+      const { done, value } = await reader.read();
+      if (done) break;
+      if (!value) continue;
+      received += value.byteLength;
+      if (received > MAX_RESPONSE_BYTES) {
+        await reader.cancel();
+        throw new Error(
+          `response body exceeds ${MAX_RESPONSE_BYTES} bytes for ${url}`,
+        );
+      }
+      chunks.push(decoder.decode(value, { stream: true }));
+    }
+    chunks.push(decoder.decode());
+  } finally {
+    reader.releaseLock();
+  }
+  return chunks.join("");
+}
+
+/**
+ * GET JSON with a hard timeout, a redirect refusal (an upstream redirect can
+ * move the read to an unvetted host, so it is an error rather than a follow)
+ * and a bounded body.
+ * Throws on network error, redirect, non-2xx, oversized body or invalid JSON.
+ */
 export async function fetchJson(
   url: string,
   options: FetchJsonOptions = {},
@@ -180,10 +247,24 @@ export async function fetchJson(
   const response = await fetch(url, {
     method: "GET",
     headers,
+    redirect: "error",
     signal: AbortSignal.timeout(timeoutMs),
   });
   if (!response.ok) {
     throw new Error(`HTTP ${response.status} ${response.statusText} for ${url}`);
   }
-  return (await response.json()) as unknown;
+
+  // Cheap pre-check: reject an advertised oversize body without reading it.
+  const declared = response.headers.get("content-length");
+  if (declared !== null) {
+    const declaredBytes = Number(declared);
+    if (Number.isFinite(declaredBytes) && declaredBytes > MAX_RESPONSE_BYTES) {
+      throw new Error(
+        `response too large: Content-Length ${declaredBytes} exceeds ${MAX_RESPONSE_BYTES} bytes for ${url}`,
+      );
+    }
+  }
+
+  const text = await readBoundedText(response, url);
+  return JSON.parse(text) as unknown;
 }

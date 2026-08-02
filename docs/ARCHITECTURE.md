@@ -433,6 +433,9 @@ question + lat/lon
 │     safe\b/i on routes, "guaranteed", "no danger"            │
 │  4. contradicts an active evacuation_order in the evidence   │
 │  5. sources or timestamps omitted entirely                   │
+│  6. LLM-only: phone-number- or street-address-like entities  │
+│     in the answer that appear nowhere in the evidence        │
+│     bundle ("ungrounded_entity")                             │
 │                                                              │
 │  → { ok: true } | { ok: false, violations: [...] }           │
 └──────────────────────────┬───────────────────────────────────┘
@@ -454,6 +457,45 @@ factual content is lost.
 `AssistantResponse` is shaped so a sourceless answer is hard to construct: `sources` and
 `freshness_note` are required fields, `evidence_event_ids` ties the prose back to specific
 records, and `composed_by` tells the UI (and the evals) which path produced the text.
+
+---
+
+## 9a. Hardening pass (2026-08-02)
+
+A security + correctness review (12 + 22 findings) produced these guarantees, in
+addition to the validator's rule 6 above:
+
+**Prompt boundary.** The user question is fenced in `<untrusted_user_question>`
+delimiters and declared data-not-instructions in the system prompt;
+`capEvidenceForPrompt` bounds what reaches the model (25 events by severity, 25
+resources, 400-char descriptions). Provenance fields are always recomputed
+deterministically from the full bundle.
+
+**Store lifecycle.** `MemoryStore` is no longer add-only: events whose `ends_at` has
+passed are stored/served as `expired` (and excluded by `queryEvents` even if upstream
+still says active), `sweepExpired(now)` deletes records older than 4× their freshness
+policy and enforces `MAX_EVENTS = 10_000` (oldest evicted first) — the API scheduler
+runs it every 5 minutes. `onChange` listeners are isolated: one throwing subscriber
+cannot stop ingestion or starve other listeners.
+
+**Routing bounds.** `MAX_SNAP_M = 1500`: an origin or destination farther than 1.5 km
+from the demo graph returns `no_path` instead of silently snapping Seattle-ward (a New
+York origin no longer yields a 4,000 km "route"). Same-node routes hazard-check the
+direct segment instead of skipping checks.
+
+**Freshness edge cases.** Timestamps more than 10 minutes in the future are treated as
+maximally stale (`MAX_FUTURE_SKEW_SECONDS`) — clock-skewed upstream data cannot become
+permanently fresh. Connector-side: NWS features with no parseable `sent`/`effective`
+are skipped rather than stamped with fetch time; 10-digit epoch values are read as
+seconds, not milliseconds; FEMA coordinates are range-checked before ingest.
+
+**Upstream fetch bounds.** `fetchJson` refuses redirects (`redirect: "error"`) and caps
+response bodies at 32 MB via streamed byte counting before `JSON.parse`.
+
+**Known gaps (tracked in ROADMAP.md):** cross-provider dedup (`dedupKey`/`mergeEvents`)
+is exported and tested but not yet wired into the ingest path — two providers reporting
+the same flood remain two events until then; `capEvidenceForPrompt` does not yet bound
+`source_records.raw_payload`.
 
 ---
 
