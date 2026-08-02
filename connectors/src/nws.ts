@@ -1,6 +1,7 @@
 import { z } from "zod";
 import {
   GeometrySchema,
+  REGION,
   type CanonicalEvent,
   type Certainty,
   type Connector,
@@ -20,7 +21,7 @@ import {
   toIso,
 } from "./util.js";
 
-export const NWS_ALERTS_URL = "https://api.weather.gov/alerts/active?area=WA";
+export const NWS_ALERTS_URL = `https://api.weather.gov/alerts/active?area=${REGION.nwsArea}`;
 
 const USER_AGENT = "harborline (https://github.com/gurul/harborline)";
 
@@ -89,7 +90,7 @@ export function mapEventType(capEvent: string | null | undefined): EventType {
 
 export const nwsConnector: Connector = {
   id: "nws",
-  label: "National Weather Service active alerts (WA)",
+  label: `National Weather Service active alerts (${REGION.nwsArea})`,
   source_tier: "A",
   expected_refresh_seconds: 60,
 

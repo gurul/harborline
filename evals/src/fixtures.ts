@@ -97,7 +97,7 @@ export function asNearby(
 }
 
 /**
- * A synthetic active evacuation order over Capitol Hill. Not part of the demo
+ * A synthetic active evacuation order over the Avenues. Not part of the demo
  * scenario — it exists so validator rule 4 (contradicting an evacuation order)
  * can be exercised against a real CanonicalEvent rather than a hand-shaped
  * object literal.
@@ -105,11 +105,11 @@ export function asNearby(
 export function evacuationOrderEvent(now: Date = NOW): CanonicalEvent {
   return makeEvent(
     {
-      event_id: "eval-evacuation-capitol-hill",
+      event_id: "eval-evacuation-the-avenues",
       event_type: "evacuation_order",
-      headline: "Evacuation order — Capitol Hill east of Broadway",
+      headline: "Evacuation order — the Avenues east of Arcadian Ave",
       description:
-        "Seattle Emergency Management has ordered immediate evacuation of the area east of Broadway between E Pine St and E Cherry St.",
+        "Butte County Emergency Management has ordered immediate evacuation of the area east of Arcadian Ave between E 1st Ave and E 9th Ave.",
       instructions: "Leave the area now. Do not remain in the evacuation zone.",
       severity: "extreme",
       urgency: "immediate",
@@ -119,11 +119,11 @@ export function evacuationOrderEvent(now: Date = NOW): CanonicalEvent {
         type: "Polygon",
         coordinates: [
           [
-            [-122.322, 47.603],
-            [-122.299, 47.603],
-            [-122.299, 47.6205],
-            [-122.322, 47.6205],
-            [-122.322, 47.603],
+            [-121.839, 39.738],
+            [-121.832, 39.738],
+            [-121.832, 39.755],
+            [-121.839, 39.755],
+            [-121.839, 39.738],
           ],
         ],
       },
@@ -139,14 +139,14 @@ export function evacuationOrderEvent(now: Date = NOW): CanonicalEvent {
 
 export function evacuationOrderRecord(now: Date = NOW): SourceRecord {
   return makeSourceRecord({
-    source_record_id: "eval-record-evacuation-capitol-hill",
-    event_id: "eval-evacuation-capitol-hill",
-    provider: "Seattle Emergency Management",
-    provider_record_id: "sem-evac-2026-0802-01",
+    source_record_id: "eval-record-evacuation-the-avenues",
+    event_id: "eval-evacuation-the-avenues",
+    provider: "Butte County Emergency Management",
+    provider_record_id: "bcem-evac-2026-0802-01",
     provider_tier: "A",
-    source_url: "https://demo.harborline.local/orders/evacuation-capitol-hill",
+    source_url: "https://demo.harborline.local/orders/evacuation-the-avenues",
     published_at: new Date(now.getTime() - 5 * 60_000).toISOString(),
     retrieved_at: now.toISOString(),
-    hash_input: "eval-evacuation-capitol-hill",
+    hash_input: "eval-evacuation-the-avenues",
   });
 }

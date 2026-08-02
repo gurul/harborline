@@ -21,7 +21,7 @@ import {
   isStale,
   pointInGeometry,
 } from "@harborline/event-schema";
-import { type GraphEdge, type RoadGraph, seattleGraph } from "./data/seattle-graph.js";
+import { type GraphEdge, type RoadGraph, demoGraph } from "./data/demo-graph.js";
 
 /** Walking and driving are both modelled at 30 km/h for the demo. */
 export const TRAVEL_SPEED_KMH = 30;
@@ -32,8 +32,8 @@ const SAMPLE_STEP_M = 40;
 /**
  * Samples inside this margin of an edge's endpoints are skipped. Two edges that
  * merely *touch* a hazard's endpoint at a shared intersection must not both be
- * flagged as crossing it — without the margin, a closure on 12th Ave between
- * Pine and John would eliminate every route through either intersection.
+ * flagged as crossing it — without the margin, a closure on Oleander Ave between
+ * E 3rd and E 5th would eliminate every route through either intersection.
  * Must exceed HAZARD_BUFFER_M.
  */
 const ENDPOINT_MARGIN_M = 40;
@@ -43,7 +43,7 @@ export const HAZARD_BUFFER_M = 30;
 /**
  * Maximum distance a request point may sit from the nearest graph node.
  *
- * The lattice covers a few square kilometres of Capitol Hill. Snapping a point
+ * The lattice covers a few square kilometres of the demo neighbourhood. Snapping a point
  * from outside it to whichever node happens to be least far away produces a
  * route through streets the user is nowhere near — and, worse, a hazard
  * assessment of those streets rather than theirs. Beyond this radius the honest
@@ -239,7 +239,7 @@ function noPathCandidate(from: LonLat, to: LonLat): RouteCandidate {
   };
 }
 
-export function calculateRoutes(input: RouteInput, graph: RoadGraph = seattleGraph): RouteResult {
+export function calculateRoutes(input: RouteInput, graph: RoadGraph = demoGraph): RouteResult {
   const adjacency = buildAdjacency(graph);
   const start = nearestNode(graph, input.from);
   const goal = nearestNode(graph, input.to);

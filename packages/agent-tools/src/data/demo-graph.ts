@@ -1,18 +1,15 @@
 /**
- * Bounded Capitol Hill / Central District road lattice.
+ * Bounded demo road lattice over the Avenues neighborhood of Chico, CA
+ * (Butte County) — the geography the seeded wildfire scenario plays out on.
  *
  * This is a hand-authored demonstration graph, not a routing-grade network:
- * five north-south avenues crossed with four east-west streets, 20 nodes and
- * 31 undirected edges. Every route response is labelled
- * `routing: "demonstration"` for exactly this reason.
+ * four north-south roads crossed with five east-west avenues, 20 nodes and
+ * 31 undirected edges, with idealized (straight, axis-aligned) geometry. Every
+ * route response is labelled `routing: "demonstration"` for exactly this
+ * reason.
  *
  * Shared demo geography (all Harborline packages agree on these coordinates):
- *   bbox lon -122.330..-122.298, lat 47.598..47.626
- *
- * E Madison St runs diagonally through this area at roughly lat 47.6115. It is
- * intentionally NOT part of the lattice — a diagonal would need intersection
- * nodes that don't fall on the grid, and the demo scenario doesn't route over
- * it. Adding it later means adding nodes, not bending an existing edge.
+ *   bbox lon -121.848..-121.832, lat 39.738..39.755
  */
 import type { LonLat } from "@harborline/event-schema";
 
@@ -34,21 +31,21 @@ export interface RoadGraph {
   edges: GraphEdge[];
 }
 
-/** North-south avenues, west to east. */
+/** North-south roads, west to east. */
 const AVENUES: { key: string; name: string; lon: number }[] = [
-  { key: "broadway", name: "Broadway", lon: -122.3208 },
-  { key: "12th_ave", name: "12th Ave", lon: -122.317 },
-  { key: "15th_ave", name: "15th Ave", lon: -122.3128 },
-  { key: "19th_ave", name: "19th Ave", lon: -122.3079 },
-  { key: "23rd_ave", name: "23rd Ave", lon: -122.3035 },
+  { key: "esplanade", name: "The Esplanade", lon: -121.846 },
+  { key: "oleander", name: "Oleander Ave", lon: -121.8425 },
+  { key: "arcadian", name: "Arcadian Ave", lon: -121.839 },
+  { key: "mangrove", name: "Mangrove Ave", lon: -121.835 },
 ];
 
-/** East-west streets, north to south. */
+/** East-west avenues, north to south. */
 const STREETS: { key: string; name: string; lat: number }[] = [
-  { key: "e_john_st", name: "E John St", lat: 47.6205 },
-  { key: "e_pine_st", name: "E Pine St", lat: 47.6154 },
-  { key: "e_union_st", name: "E Union St", lat: 47.6098 },
-  { key: "e_cherry_st", name: "E Cherry St", lat: 47.6033 },
+  { key: "e_9th_ave", name: "E 9th Ave", lat: 39.7525 },
+  { key: "e_7th_ave", name: "E 7th Ave", lat: 39.7495 },
+  { key: "e_5th_ave", name: "E 5th Ave", lat: 39.7465 },
+  { key: "e_3rd_ave", name: "E 3rd Ave", lat: 39.7435 },
+  { key: "e_1st_ave", name: "E 1st Ave", lat: 39.7405 },
 ];
 
 export function nodeId(avenueKey: string, streetKey: string): string {
@@ -75,11 +72,11 @@ function buildGraph(): RoadGraph {
   const connect = (fromId: string, toId: string, name: string) => {
     const from = byKey.get(fromId);
     const to = byKey.get(toId);
-    if (!from || !to) throw new Error(`seattle-graph: unknown node ${fromId} -> ${toId}`);
+    if (!from || !to) throw new Error(`demo-graph: unknown node ${fromId} -> ${toId}`);
     edges.push({ from: fromId, to: toId, name, geometry: [from.coord, to.coord] });
   };
 
-  // Along each east-west street, between adjacent avenues.
+  // Along each east-west avenue, between adjacent north-south roads.
   for (const st of STREETS) {
     for (let i = 0; i < AVENUES.length - 1; i++) {
       connect(
@@ -90,7 +87,7 @@ function buildGraph(): RoadGraph {
     }
   }
 
-  // Along each north-south avenue, between adjacent streets.
+  // Along each north-south road, between adjacent avenues.
   for (const ave of AVENUES) {
     for (let i = 0; i < STREETS.length - 1; i++) {
       connect(
@@ -104,9 +101,9 @@ function buildGraph(): RoadGraph {
   return { nodes, edges };
 }
 
-export const seattleGraph: RoadGraph = buildGraph();
+export const demoGraph: RoadGraph = buildGraph();
 
 /** Demo bounding box the whole system agrees on: [west, south, east, north]. */
 export const DEMO_BBOX: [number, number, number, number] = [
-  -122.33, 47.598, -122.298, 47.626,
+  -121.848, 39.738, -121.832, 39.755,
 ];

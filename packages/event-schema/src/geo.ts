@@ -145,8 +145,3 @@ export function bboxContains(bbox: BBox, pt: LonLat): boolean {
   return pt[0] >= bbox[0] && pt[0] <= bbox[2] && pt[1] >= bbox[1] && pt[1] <= bbox[3];
 }
 
-/** Puget Sound region bounding box used to scope connectors. */
-export const PUGET_SOUND_BBOX: BBox = [-123.3, 46.9, -121.0, 48.3];
-
-/** Downtown Seattle fallback center. */
-export const SEATTLE_CENTER: LonLat = [-122.3321, 47.6062];

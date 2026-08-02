@@ -19,7 +19,7 @@ Related reading: [BUILD_GUIDE.md](./BUILD_GUIDE.md) is the implementation spec;
 ┌──────────────────┐
 │ Upstream sources │
 │                  │
-│ NWS   api.weather.gov/alerts/active?area=WA        Tier A
+│ NWS   api.weather.gov/alerts/active?area=CA        Tier A
 │ USGS  earthquake.usgs.gov 2.5_week.geojson         Tier A
 │ FEMA  ARC Open Shelters FeatureServer (f=geojson)  Tier B
 │ demo  local fixtures                               Tier A–E
@@ -117,7 +117,8 @@ imports from `@harborline/event-schema` and none of them re-declares a shape.
 
 | Module | Exports |
 |---|---|
-| `geo.ts` | `Point`, `LineString`, `Polygon`, `MultiPolygon`, `Geometry`; `haversineMeters`, `pointInPolygon`, `pointInGeometry`, `distanceToLineStringMeters`, `geometryCentroid`, `PUGET_SOUND_BBOX`, `SEATTLE_CENTER` |
+| `geo.ts` | `Point`, `LineString`, `Polygon`, `MultiPolygon`, `Geometry`; `haversineMeters`, `pointInPolygon`, `pointInGeometry`, `distanceToLineStringMeters`, `geometryCentroid`, `bboxContains` |
+| `region.ts` | `RegionConfig`, `REGION` — the single location-specific config (name, centre, bbox, NWS area, shelter state aliases); default is California, centred on Chico |
 | `events.ts` | `CanonicalEvent`, `SourceRecord`, `EventType`, `Severity`, `Urgency`, `Certainty`, `EventStatus`, `SourceTier`, `ConfidenceLabel`, `SEVERITY_RANK` |
 | `resources.ts` | `Resource`, `NearbyResource`, `ResourceType`, `OperationalStatus` |
 | `routing.ts` | `RoadSegment`, `RouteCandidate`, `RouteRecommendation` |
@@ -225,7 +226,7 @@ highest authority among its contributing records.
 | Tier | Meaning | Weight | Examples | Ceiling on user-facing label |
 |---|---|---|---|---|
 | **A** | Issuing authority — the body legally responsible for the declaration | `1.00` | NWS alert, USGS earthquake, city evacuation order | `official` |
-| **B** | Operational authority — the body that operates the thing being described | `0.92` | Seattle DOT closure, utility outage feed, FEMA/ARC shelter status | `official` |
+| **B** | Operational authority — the body that operates the thing being described | `0.92` | DOT/public-works closure, utility outage feed, FEMA/ARC shelter status | `official` |
 | **C** | Verified institution — established newsroom or institutional account | `0.75` | Local newsroom report | `verified` |
 | **D** | Corroborated community report — multiple independent reports agreeing | `0.55` | Deferred; see [ROADMAP.md](./ROADMAP.md) | `developing` |
 | **E** | Unverified single report | `0.30` | Unverified social post | `unverified` (hard cap) |
@@ -322,8 +323,8 @@ tools, and violation class 2 in `validateResponse`.
 
 Lives in `packages/agent-tools/src/router.ts`, shared by the API handler, the
 `calculate_routes` / `score_route_risk` tools, and the evals. Road graph:
-`packages/agent-tools/src/data/seattle-graph.ts` — a hand-authored, bounded lattice of
-roughly 30–60 nodes on real streets around Capitol Hill and the Central District.
+`packages/agent-tools/src/data/demo-graph.ts` — a hand-authored, bounded lattice of
+roughly 30–60 nodes on real streets around the Avenues neighborhood of Chico, CA.
 
 ```
   origin (lat, lon) + destination resource
@@ -479,7 +480,7 @@ runs it every 5 minutes. `onChange` listeners are isolated: one throwing subscri
 cannot stop ingestion or starve other listeners.
 
 **Routing bounds.** `MAX_SNAP_M = 1500`: an origin or destination farther than 1.5 km
-from the demo graph returns `no_path` instead of silently snapping Seattle-ward (a New
+from the demo graph returns `no_path` instead of silently snapping toward the demo area (a New
 York origin no longer yields a 4,000 km "route"). Same-node routes hazard-check the
 direct segment instead of skipping checks.
 
@@ -494,7 +495,7 @@ response bodies at 32 MB via streamed byte counting before `JSON.parse`.
 
 **Known gaps (tracked in ROADMAP.md):** cross-provider dedup (`dedupKey`/`mergeEvents`)
 is exported and tested but not yet wired into the ingest path — two providers reporting
-the same flood remain two events until then; `capEvidenceForPrompt` does not yet bound
+the same hazard remain two events until then; `capEvidenceForPrompt` does not yet bound
 `source_records.raw_payload`.
 
 ---

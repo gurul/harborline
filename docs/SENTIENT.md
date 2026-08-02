@@ -33,10 +33,10 @@ connecting to MCP servers.
 That shape matches exactly one Harborline job: **non-latency-sensitive
 investigations**. Examples:
 
-- "Seattle DOT says closed; a community report says passable — investigate": fan out
+- "Public works says closed; a community report says passable — investigate": fan out
   over `compare_source_records`, agency pages, and news, and produce a briefing with
   cited disagreements.
-- "Summarize how the flood situation evolved over the last 6 hours for an operator."
+- "Summarize how the fire situation evolved over the last 6 hours for an operator."
 
 Integration contract (`docs/ROADMAP.md`, investigation tier):
 
@@ -64,7 +64,7 @@ from opendeepsearch import OpenDeepSearchTool
 
 search = OpenDeepSearchTool(model_name="anthropic/claude-sonnet-5", reranker="jina")
 search.setup()
-result = search.forward("King County flood road closures press briefing")
+result = search.forward("Butte County wildfire road closures press briefing")
 ```
 
 Harborline use — the future `search_verified_news(query, geographic_scope, since)`

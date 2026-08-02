@@ -50,7 +50,7 @@ export type ConfidenceLabel = z.infer<typeof ConfidenceLabelSchema>;
 export const SourceRecordSchema = z.object({
   source_record_id: z.string(),
   event_id: z.string().nullable(),
-  provider: z.string(), // e.g. "NWS", "Seattle DOT", "KING 5 News"
+  provider: z.string(), // e.g. "NWS", a DOT / public-works feed, a local newsroom
   provider_record_id: z.string().nullable(),
   provider_tier: SourceTierSchema,
   source_url: z.string().nullable(),

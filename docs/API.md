@@ -17,11 +17,12 @@ Conventions that hold for every endpoint:
   with a tier. There is no endpoint that returns an unattributed fact.
 
 > [!NOTE]
-> All examples below use the **demo scenario** seeded by `DEMO_MODE=1` — a Capitol Hill
-> flood warning, two SDOT closures (one on 12th Ave), and three shelters including Calvary
-> Church. Demo fixtures are synthetic: the coordinates are real Seattle geography, the
-> facilities and incidents are not. Example responses are rendered as of a fixed
-> `now = 2026-08-02T18:40:00Z`, so ages and confidence scores are reproducible.
+> All examples below use the **demo scenario** seeded by `DEMO_MODE=1` — a wildfire
+> evacuation warning over east Chico, CA, two Chico Public Works closures (one on
+> Oleander Ave), and three shelters including Neighborhood Church. Demo fixtures are
+> synthetic: the coordinates are real Chico geography, the facilities and incidents are
+> not. Example responses are rendered as of a fixed `now = 2026-08-02T18:40:00Z`, so ages
+> and confidence scores are reproducible.
 
 ---
 
@@ -95,7 +96,7 @@ curl -s http://localhost:8787/v1/health | jq
     },
     {
       "id": "nws",
-      "label": "NOAA National Weather Service — active alerts (WA)",
+      "label": "NOAA National Weather Service — active alerts (CA)",
       "healthy": true,
       "last_success_at": "2026-08-02T18:39:04Z",
       "last_error": null,
@@ -138,13 +139,13 @@ verified first).
 
 | Parameter | Type | Required | Default | Notes |
 |---|---|---|---|---|
-| `lat` | number `-90..90` | no | Seattle center `47.6062` | Query center latitude |
-| `lon` | number `-180..180` | no | Seattle center `-122.3321` | Query center longitude |
-| `radius_m` | number `> 0` | no | `10000` | Radius in meters |
-| `types` | comma-separated `EventType` | no | all types | e.g. `flood,road_closure` |
+| `lat` | number `-90..90` | no | none | Query center latitude; must be provided together with `lon`. Omitting both returns the full active feed |
+| `lon` | number `-180..180` | no | none | Query center longitude |
+| `radius_m` | number `> 0` | no | `5000` | Radius in meters; applies only when a center is given |
+| `types` | comma-separated `EventType` | no | all types | e.g. `fire,road_closure` |
 
 ```bash
-curl -s "http://localhost:8787/v1/events?lat=47.6145&lon=-122.3180&radius_m=3000&types=flood,road_closure" | jq
+curl -s "http://localhost:8787/v1/events?lat=39.7398&lon=-121.8432&radius_m=3000&types=fire,road_closure" | jq
 ```
 
 **Response `200`**
@@ -153,11 +154,11 @@ curl -s "http://localhost:8787/v1/events?lat=47.6145&lon=-122.3180&radius_m=3000
 {
   "events": [
     {
-      "event_id": "nws-wa-flood-20260802-0143",
-      "event_type": "flood",
-      "headline": "Flood Warning — Capitol Hill and Central District",
-      "description": "Rapid street flooding reported along the Capitol Hill drainage basin. Water over roadway at multiple intersections. Do not drive through standing water.",
-      "instructions": "Move to higher ground. Avoid walking or driving through flood waters. Follow instructions from local officials.",
+      "event_id": "calfire-fire-east-chico-20260802",
+      "event_type": "fire",
+      "headline": "Evacuation Warning — wind-driven vegetation fire east of the Avenues",
+      "description": "A wind-driven vegetation fire is burning west toward the Mangrove Ave corridor. Spot fires and heavy smoke are reported east of Mangrove Ave, and red flag winds are expected to continue through the evening.",
+      "instructions": "Prepare to leave now and evacuate if you feel unsafe — do not wait for a mandatory order. Stay out of the area east of Mangrove Ave. Do not drive through smoke; downed power lines may be energized.",
       "severity": "severe",
       "urgency": "immediate",
       "certainty": "observed",
@@ -166,17 +167,17 @@ curl -s "http://localhost:8787/v1/events?lat=47.6145&lon=-122.3180&radius_m=3000
         "type": "Polygon",
         "coordinates": [
           [
-            [-122.3230, 47.6100],
-            [-122.3080, 47.6100],
-            [-122.3080, 47.6215],
-            [-122.3230, 47.6215],
-            [-122.3230, 47.6100]
+            [-121.8365, 39.7380],
+            [-121.8320, 39.7380],
+            [-121.8320, 39.7550],
+            [-121.8365, 39.7550],
+            [-121.8365, 39.7380]
           ]
         ]
       },
-      "starts_at": "2026-08-02T17:05:00Z",
-      "ends_at": "2026-08-03T02:00:00Z",
-      "last_verified_at": "2026-08-02T18:32:00Z",
+      "starts_at": "2026-08-02T17:55:00Z",
+      "ends_at": null,
+      "last_verified_at": "2026-08-02T18:36:00Z",
       "source_count": 2,
       "best_tier": "A",
       "confidence_score": 0.91,
@@ -184,36 +185,36 @@ curl -s "http://localhost:8787/v1/events?lat=47.6145&lon=-122.3180&radius_m=3000
       "contradiction_note": null
     },
     {
-      "event_id": "sdot-closure-12th-ave-20260802",
+      "event_id": "cpw-closure-oleander-ave-20260802",
       "event_type": "road_closure",
-      "headline": "12th Ave closed between E Pike St and E Madison St",
-      "description": "Full closure in both directions due to standing water and a compromised storm drain. No estimated reopening time.",
+      "headline": "Oleander Ave closed between E 3rd Ave and E 5th Ave",
+      "description": "Full closure in both directions after red flag winds brought down power lines across the roadway. No estimated reopening time.",
       "instructions": null,
-      "severity": "moderate",
+      "severity": "severe",
       "urgency": "immediate",
       "certainty": "observed",
       "status": "active",
       "geometry": {
         "type": "LineString",
         "coordinates": [
-          [-122.3168, 47.6110],
-          [-122.3168, 47.6185]
+          [-121.8425, 39.7435],
+          [-121.8425, 39.7465]
         ]
       },
-      "starts_at": "2026-08-02T17:40:00Z",
+      "starts_at": "2026-08-02T17:10:00Z",
       "ends_at": null,
       "last_verified_at": "2026-08-02T18:18:00Z",
       "source_count": 1,
       "best_tier": "B",
       "confidence_score": 0.51,
       "confidence_label": "developing",
-      "contradiction_note": "Seattle DOT reports this segment closed (verified 22 min ago). An unverified social report at 18:29Z claims traffic is moving. The official closure stands; the dispute is shown, not merged."
+      "contradiction_note": "Chico Public Works reports this segment closed (verified 22 min ago). An unverified social report at 18:29Z claims traffic is moving. The official closure stands; the dispute is shown, not merged."
     },
     {
-      "event_id": "sdot-closure-e-union-20260802",
+      "event_id": "cpw-closure-mangrove-ave-20260802",
       "event_type": "road_closure",
-      "headline": "E Union St closed between 14th Ave and 23rd Ave",
-      "description": "Eastbound and westbound lanes closed for flood response staging.",
+      "headline": "Mangrove Ave closed between E 5th Ave and E 7th Ave",
+      "description": "Northbound and southbound lanes closed for fire apparatus staging.",
       "instructions": null,
       "severity": "moderate",
       "urgency": "expected",
@@ -222,11 +223,11 @@ curl -s "http://localhost:8787/v1/events?lat=47.6145&lon=-122.3180&radius_m=3000
       "geometry": {
         "type": "LineString",
         "coordinates": [
-          [-122.3210, 47.6135],
-          [-122.3090, 47.6135]
+          [-121.8350, 39.7465],
+          [-121.8350, 39.7495]
         ]
       },
-      "starts_at": "2026-08-02T17:55:00Z",
+      "starts_at": "2026-08-02T16:40:00Z",
       "ends_at": null,
       "last_verified_at": "2026-08-02T18:05:00Z",
       "source_count": 1,
@@ -240,9 +241,9 @@ curl -s "http://localhost:8787/v1/events?lat=47.6145&lon=-122.3180&radius_m=3000
 ```
 
 Reading the confidence numbers against
-[the formula](./ARCHITECTURE.md#6-confidence-formula-and-label-gating): the flood is tier A,
-8 minutes old against a 2-hour policy, corroborated by two sources → `0.91`, `official`.
-The 12th Ave closure is tier B with a single source and an active tier E dispute pulling
+[the formula](./ARCHITECTURE.md#6-confidence-formula-and-label-gating): the fire is tier A,
+4 minutes old against a 1-hour policy, corroborated by two sources → `0.91`, `official`.
+The Oleander Ave closure is tier B with a single source and an active tier E dispute pulling
 `consistency` down → `0.51`, `developing`. **The label drop does not weaken the closure**:
 elimination in the router keys on `event_type` and `status`, not on the label, so this
 closure still eliminates any route crossing it.
@@ -256,7 +257,7 @@ away, so a two-source event returns two records, and a disputed event returns th
 record too.
 
 ```bash
-curl -s http://localhost:8787/v1/events/sdot-closure-12th-ave-20260802 | jq
+curl -s http://localhost:8787/v1/events/cpw-closure-oleander-ave-20260802 | jq
 ```
 
 **Response `200`**
@@ -264,33 +265,33 @@ curl -s http://localhost:8787/v1/events/sdot-closure-12th-ave-20260802 | jq
 ```json
 {
   "event": {
-    "event_id": "sdot-closure-12th-ave-20260802",
+    "event_id": "cpw-closure-oleander-ave-20260802",
     "event_type": "road_closure",
-    "headline": "12th Ave closed between E Pike St and E Madison St",
-    "severity": "moderate",
+    "headline": "Oleander Ave closed between E 3rd Ave and E 5th Ave",
+    "severity": "severe",
     "status": "active",
     "last_verified_at": "2026-08-02T18:18:00Z",
     "source_count": 1,
     "best_tier": "B",
     "confidence_score": 0.51,
     "confidence_label": "developing",
-    "contradiction_note": "Seattle DOT reports this segment closed (verified 22 min ago). An unverified social report at 18:29Z claims traffic is moving. The official closure stands; the dispute is shown, not merged."
+    "contradiction_note": "Chico Public Works reports this segment closed (verified 22 min ago). An unverified social report at 18:29Z claims traffic is moving. The official closure stands; the dispute is shown, not merged."
   },
   "source_records": [
     {
-      "source_record_id": "src-sdot-8841",
-      "event_id": "sdot-closure-12th-ave-20260802",
-      "provider": "Seattle DOT",
-      "provider_record_id": "TRV-2026-08-02-0117",
+      "source_record_id": "src-cpw-8841",
+      "event_id": "cpw-closure-oleander-ave-20260802",
+      "provider": "Chico Public Works",
+      "provider_record_id": "CPW-2026-08-02-0117",
       "provider_tier": "B",
-      "source_url": "https://web.seattle.gov/travelers/incident/TRV-2026-08-02-0117",
-      "published_at": "2026-08-02T17:40:00Z",
+      "source_url": "https://chico.ca.us/publicworks/closures/CPW-2026-08-02-0117",
+      "published_at": "2026-08-02T17:10:00Z",
       "retrieved_at": "2026-08-02T18:18:00Z",
       "content_hash": "sha256:6f1c0a…"
     },
     {
       "source_record_id": "src-social-2210",
-      "event_id": "sdot-closure-12th-ave-20260802",
+      "event_id": "cpw-closure-oleander-ave-20260802",
       "provider": "Unverified social report",
       "provider_record_id": "post-77120",
       "provider_tier": "E",
@@ -316,8 +317,8 @@ ascending.
 
 | Parameter | Type | Required | Default | Notes |
 |---|---|---|---|---|
-| `lat` | number | no | `47.6062` | Query center latitude |
-| `lon` | number | no | `-122.3321` | Query center longitude |
+| `lat` | number | yes | — | Query center latitude |
+| `lon` | number | yes | — | Query center longitude |
 | `radius_m` | number | no | `10000` | Radius in meters |
 | `type` | `ResourceType` | no | all | `shelter`, `hospital`, `cooling_center`, `food_water`, `charging`, `transport_hub` |
 | `status` | `OperationalStatus` | no | all | `open`, `closed`, `full`, `unknown` |
@@ -330,7 +331,7 @@ ascending.
 > `last_verified_at` against the policy before treating a record here as current.
 
 ```bash
-curl -s "http://localhost:8787/v1/resources?lat=47.6145&lon=-122.3180&type=shelter" | jq
+curl -s "http://localhost:8787/v1/resources?lat=39.7398&lon=-121.8432&type=shelter" | jq
 ```
 
 **Response `200`**
@@ -339,64 +340,64 @@ curl -s "http://localhost:8787/v1/resources?lat=47.6145&lon=-122.3180&type=shelt
 {
   "resources": [
     {
-      "resource_id": "shelter-calvary-church",
+      "resource_id": "demo-shelter-chico-community-center",
       "resource_type": "shelter",
-      "name": "Calvary Church Emergency Shelter",
-      "location": { "type": "Point", "coordinates": [-122.3095, 47.6242] },
-      "address": "1120 E Aloha St, Seattle, WA 98102",
-      "operational_status": "open",
-      "capacity_total": 120,
-      "capacity_available": 47,
-      "accessibility_features": ["wheelchair_accessible", "accessible_restrooms", "cots"],
-      "pet_policy": "Leashed or crated pets accepted",
-      "contact_information": "(206) 555-0142",
-      "last_verified_at": "2026-08-02T18:32:00Z",
-      "provider": "American Red Cross",
-      "provider_tier": "B",
-      "source_url": "https://gis.fema.gov/arcgis/shelters/calvary-church",
-      "distance_m": 1254
-    },
-    {
-      "resource_id": "shelter-miller-community-center",
-      "resource_type": "shelter",
-      "name": "Miller Community Center",
-      "location": { "type": "Point", "coordinates": [-122.3155, 47.6262] },
-      "address": "330 19th Ave E, Seattle, WA 98112",
+      "name": "Chico Community Center",
+      "location": { "type": "Point", "coordinates": [-121.8460, 39.7405] },
+      "address": "The Esplanade & E 1st Ave, Chico, CA 95926",
       "operational_status": "full",
-      "capacity_total": 80,
+      "capacity_total": 180,
       "capacity_available": 0,
       "accessibility_features": ["wheelchair_accessible"],
       "pet_policy": "Service animals only",
-      "contact_information": "(206) 555-0188",
-      "last_verified_at": "2026-08-02T18:11:00Z",
-      "provider": "American Red Cross",
+      "contact_information": "(530) 555-0163",
+      "last_verified_at": "2026-08-02T18:25:00Z",
+      "provider": "Butte County Emergency Management",
       "provider_tier": "B",
-      "source_url": "https://gis.fema.gov/arcgis/shelters/miller-cc",
-      "distance_m": 1313
+      "source_url": "https://demo.harborline.local/shelters/chico-community-center",
+      "distance_m": 253
     },
     {
-      "resource_id": "shelter-garfield-community-center",
+      "resource_id": "demo-shelter-neighborhood-church",
       "resource_type": "shelter",
-      "name": "Garfield Community Center",
-      "location": { "type": "Point", "coordinates": [-122.3018, 47.6060] },
-      "address": "2323 E Cherry St, Seattle, WA 98122",
+      "name": "Neighborhood Church",
+      "location": { "type": "Point", "coordinates": [-121.8460, 39.7525] },
+      "address": "The Esplanade & E 9th Ave, Chico, CA 95926",
+      "operational_status": "open",
+      "capacity_total": 200,
+      "capacity_available": 120,
+      "accessibility_features": ["wheelchair_accessible", "accessible_restrooms"],
+      "pet_policy": "Pets allowed (leashed or crated)",
+      "contact_information": "(530) 555-0142",
+      "last_verified_at": "2026-08-02T18:32:00Z",
+      "provider": "Butte County Emergency Management",
+      "provider_tier": "B",
+      "source_url": "https://demo.harborline.local/shelters/neighborhood-church",
+      "distance_m": 1432
+    },
+    {
+      "resource_id": "demo-shelter-bidwell-community-center",
+      "resource_type": "shelter",
+      "name": "Bidwell Community Center",
+      "location": { "type": "Point", "coordinates": [-121.8350, 39.7510] },
+      "address": "Mangrove Ave & E 9th Ave, Chico, CA 95926",
       "operational_status": "open",
       "capacity_total": 150,
-      "capacity_available": null,
-      "accessibility_features": ["wheelchair_accessible", "cots"],
-      "pet_policy": null,
-      "contact_information": "(206) 555-0130",
+      "capacity_available": 40,
+      "accessibility_features": ["wheelchair_accessible"],
+      "pet_policy": "Service animals only",
+      "contact_information": "(530) 555-0177",
       "last_verified_at": "2026-08-01T16:40:00Z",
-      "provider": "American Red Cross",
+      "provider": "Butte County Emergency Management",
       "provider_tier": "B",
-      "source_url": "https://gis.fema.gov/arcgis/shelters/garfield-cc",
-      "distance_m": 1538
+      "source_url": "https://demo.harborline.local/shelters/bidwell-community-center",
+      "distance_m": 1447
     }
   ]
 }
 ```
 
-Garfield's `last_verified_at` is **26 hours** old against a 24-hour shelter policy. It is
+Bidwell's `last_verified_at` is **26 hours** old against a 24-hour shelter policy. It is
 returned here with its timestamp so the map can render it honestly, and it is rejected by
 the assistant's resource tool with `rejected_reason: "stale_status"`.
 
@@ -407,7 +408,7 @@ the assistant's resource tool with `rejected_reason: "stale_status"`.
 One resource plus its source records.
 
 ```bash
-curl -s http://localhost:8787/v1/resources/shelter-calvary-church | jq
+curl -s http://localhost:8787/v1/resources/demo-shelter-neighborhood-church | jq
 ```
 
 **Response `200`**
@@ -415,26 +416,26 @@ curl -s http://localhost:8787/v1/resources/shelter-calvary-church | jq
 ```json
 {
   "resource": {
-    "resource_id": "shelter-calvary-church",
+    "resource_id": "demo-shelter-neighborhood-church",
     "resource_type": "shelter",
-    "name": "Calvary Church Emergency Shelter",
-    "location": { "type": "Point", "coordinates": [-122.3095, 47.6242] },
+    "name": "Neighborhood Church",
+    "location": { "type": "Point", "coordinates": [-121.8460, 39.7525] },
     "operational_status": "open",
-    "capacity_total": 120,
-    "capacity_available": 47,
+    "capacity_total": 200,
+    "capacity_available": 120,
     "last_verified_at": "2026-08-02T18:32:00Z",
-    "provider": "American Red Cross",
+    "provider": "Butte County Emergency Management",
     "provider_tier": "B",
-    "source_url": "https://gis.fema.gov/arcgis/shelters/calvary-church"
+    "source_url": "https://demo.harborline.local/shelters/neighborhood-church"
   },
   "source_records": [
     {
-      "source_record_id": "src-arc-4417",
+      "source_record_id": "src-bcem-4417",
       "event_id": null,
-      "provider": "American Red Cross",
-      "provider_record_id": "SHELTER-WA-KING-0142",
+      "provider": "Butte County Emergency Management",
+      "provider_record_id": "SHELTER-CA-BUTTE-0142",
       "provider_tier": "B",
-      "source_url": "https://gis.fema.gov/arcgis/shelters/calvary-church",
+      "source_url": "https://demo.harborline.local/shelters/neighborhood-church",
       "published_at": "2026-08-02T18:32:00Z",
       "retrieved_at": "2026-08-02T18:36:00Z",
       "content_hash": "sha256:04ae71…"
@@ -461,7 +462,7 @@ reason, plus the recommendation (or `null` when nothing survives).
 | `to_resource_id` | string | yes | Destination resource id |
 
 ```bash
-curl -s "http://localhost:8787/v1/routes?from_lat=47.6145&from_lon=-122.3180&to_resource_id=shelter-calvary-church" | jq
+curl -s "http://localhost:8787/v1/routes?from_lat=39.7398&from_lon=-121.8432&to_resource_id=demo-shelter-neighborhood-church" | jq
 ```
 
 **Response `200`**
@@ -470,81 +471,88 @@ curl -s "http://localhost:8787/v1/routes?from_lat=47.6145&from_lon=-122.3180&to_
 {
   "candidates": [
     {
-      "route_id": "route-a",
+      "route_id": "route_1",
       "geometry": {
         "type": "LineString",
         "coordinates": [
-          [-122.3180, 47.6145],
-          [-122.3168, 47.6145],
-          [-122.3168, 47.6185],
-          [-122.3120, 47.6205],
-          [-122.3095, 47.6242]
+          [-121.8432, 39.7398],
+          [-121.8425, 39.7405],
+          [-121.8425, 39.7435],
+          [-121.8425, 39.7465],
+          [-121.8425, 39.7495],
+          [-121.8425, 39.7525],
+          [-121.8460, 39.7525]
         ]
       },
-      "distance_m": 1610,
-      "duration_min": 6.4,
-      "hazard_exposure_m": 740,
-      "intersecting_event_ids": [
-        "sdot-closure-12th-ave-20260802",
-        "nws-wa-flood-20260802-0143"
-      ],
-      "risk_score": 0,
+      "distance_m": 1731,
+      "duration_min": 3.5,
+      "hazard_exposure_m": 0,
+      "intersecting_event_ids": ["cpw-closure-oleander-ave-20260802"],
+      "risk_score": 3.46,
       "eliminated": true,
       "rejected_reason": "closure_intersection"
     },
     {
-      "route_id": "route-b",
+      "route_id": "route_2",
       "geometry": {
         "type": "LineString",
         "coordinates": [
-          [-122.3180, 47.6145],
-          [-122.3180, 47.6198],
-          [-122.3140, 47.6221],
-          [-122.3095, 47.6242]
+          [-121.8432, 39.7398],
+          [-121.8425, 39.7405],
+          [-121.8460, 39.7405],
+          [-121.8460, 39.7435],
+          [-121.8460, 39.7465],
+          [-121.8460, 39.7495],
+          [-121.8460, 39.7525]
         ]
       },
-      "distance_m": 1845,
-      "duration_min": 8.1,
-      "hazard_exposure_m": 260,
-      "intersecting_event_ids": ["nws-wa-flood-20260802-0143"],
-      "risk_score": 14.7,
+      "distance_m": 1732,
+      "duration_min": 3.5,
+      "hazard_exposure_m": 0,
+      "intersecting_event_ids": [],
+      "risk_score": 3.46,
       "eliminated": false,
       "rejected_reason": null
     },
     {
-      "route_id": "route-c",
+      "route_id": "route_3",
       "geometry": {
         "type": "LineString",
         "coordinates": [
-          [-122.3180, 47.6145],
-          [-122.3222, 47.6160],
-          [-122.3210, 47.6228],
-          [-122.3095, 47.6242]
+          [-121.8432, 39.7398],
+          [-121.8425, 39.7405],
+          [-121.8390, 39.7405],
+          [-121.8390, 39.7435],
+          [-121.8390, 39.7465],
+          [-121.8390, 39.7495],
+          [-121.8390, 39.7525],
+          [-121.8425, 39.7525],
+          [-121.8460, 39.7525]
         ]
       },
-      "distance_m": 2310,
-      "duration_min": 9.8,
+      "distance_m": 2331,
+      "duration_min": 4.7,
       "hazard_exposure_m": 0,
       "intersecting_event_ids": [],
-      "risk_score": 16.2,
+      "risk_score": 4.66,
       "eliminated": false,
       "rejected_reason": null
     }
   ],
   "recommendation": {
-    "recommendation_id": "rec-20260802-1840-01",
-    "route_id": "route-b",
-    "destination_resource_id": "shelter-calvary-church",
-    "summary": "Lowest-risk route currently available to Calvary Church Emergency Shelter — about 8 min, avoiding 2 hazards. One alternative was eliminated because it crosses an active Seattle DOT closure on 12th Ave.",
-    "duration_min": 8.1,
-    "avoided_hazard_count": 2,
+    "recommendation_id": "rec_demo-shelter-neighborhood-church_1785758400000",
+    "route_id": "route_2",
+    "destination_resource_id": "demo-shelter-neighborhood-church",
+    "summary": "Lowest-risk route currently available to Neighborhood Church — 3 min, avoids 3 reported hazards. Conditions may change.",
+    "duration_min": 3.5,
+    "avoided_hazard_count": 3,
     "evidence_event_ids": [
-      "nws-wa-flood-20260802-0143",
-      "sdot-closure-12th-ave-20260802",
-      "sdot-closure-e-union-20260802"
+      "calfire-fire-east-chico-20260802",
+      "cpw-closure-oleander-ave-20260802",
+      "cpw-closure-mangrove-ave-20260802"
     ],
     "generated_at": "2026-08-02T18:40:00Z",
-    "expires_at": "2026-08-02T19:10:00Z",
+    "expires_at": "2026-08-02T18:50:00Z",
     "routing": "demonstration"
   }
 }
@@ -557,9 +565,9 @@ Three things this response is contractually required to do:
   and does not validate.
 - **`summary` never says "safe".** The phrasing is "lowest-risk route currently available".
   Violation class 3 of the safety validator rejects guarantee language independently.
-- **Eliminated candidates are returned, not hidden.** `route-a` is the naively shortest path
-  and it is exactly the one crossing the 12th Ave closure. Showing the rejection is the
-  evidence that the elimination happened.
+- **Eliminated candidates are returned, not hidden.** `route_1` is the naively shortest path
+  and it is exactly the one running up Oleander Ave through the closure. Showing the
+  rejection is the evidence that the elimination happened.
 
 When every candidate is eliminated, `recommendation` is `null` and the candidate list
 carries the reasons. Clients must render that as "no route we can recommend right now",
@@ -583,32 +591,32 @@ Runs the [assistant pipeline](./ARCHITECTURE.md#9-assistant-pipeline):
 ```bash
 curl -s -X POST http://localhost:8787/v1/assistant/ask \
   -H 'Content-Type: application/json' \
-  -d '{"question":"Where is the nearest open shelter?","lat":47.6145,"lon":-122.3180}' | jq
+  -d '{"question":"Where is the nearest open shelter?","lat":39.7398,"lon":-121.8432}' | jq
 ```
 
 **Response `200`** (`AssistantResponse`)
 
 ```json
 {
-  "answer_markdown": "**Calvary Church Emergency Shelter** is the nearest shelter currently reported open — about 1.3 km away at 1120 E Aloha St. The American Red Cross verified its status 8 minutes ago: open, with 47 of 120 spaces available.\n\nTwo other shelters were considered and set aside:\n\n- **Miller Community Center** (1.3 km) — reported **full** as of 29 minutes ago.\n- **Garfield Community Center** (1.5 km) — its status was last verified 26 hours ago, which is past the 24-hour freshness limit for shelters. It may well be open; we cannot say that it is.",
-  "recommended_action": "Head to Calvary Church Emergency Shelter, 1120 E Aloha St. Call (206) 555-0142 before travelling to confirm space is still available.",
+  "answer_markdown": "**Neighborhood Church** is the nearest shelter currently reported open — about 1.4 km away at The Esplanade & E 9th Ave. Butte County Emergency Management verified its status 8 minutes ago: open, with 120 of 200 spaces available.\n\nTwo other shelters were considered and set aside:\n\n- **Chico Community Center** (0.3 km) — reported **full** as of 15 minutes ago.\n- **Bidwell Community Center** (1.4 km) — its status was last verified 26 hours ago, which is past the 24-hour freshness limit for shelters. It may well be open; we cannot say that it is.",
+  "recommended_action": "Head to Neighborhood Church, The Esplanade & E 9th Ave. Call (530) 555-0142 before travelling to confirm space is still available.",
   "sources": [
     {
-      "provider": "American Red Cross",
+      "provider": "Butte County Emergency Management",
       "tier": "B",
-      "url": "https://gis.fema.gov/arcgis/shelters/calvary-church",
+      "url": "https://demo.harborline.local/shelters/neighborhood-church",
       "last_verified_at": "2026-08-02T18:32:00Z"
     },
     {
-      "provider": "American Red Cross",
+      "provider": "Butte County Emergency Management",
       "tier": "B",
-      "url": "https://gis.fema.gov/arcgis/shelters/miller-cc",
-      "last_verified_at": "2026-08-02T18:11:00Z"
+      "url": "https://demo.harborline.local/shelters/chico-community-center",
+      "last_verified_at": "2026-08-02T18:25:00Z"
     }
   ],
   "freshness_note": "Shelter status verified 8 min ago. Shelter records are considered stale after 24 h and are then excluded from recommendations.",
-  "uncertainty_note": "Shelter capacity changes faster than the feed updates. Garfield Community Center was excluded because its status is 26 h old, not because it is closed.",
-  "evidence_event_ids": ["nws-wa-flood-20260802-0143"],
+  "uncertainty_note": "Shelter capacity changes faster than the feed updates. Bidwell Community Center was excluded because its status is 26 h old, not because it is closed.",
+  "evidence_event_ids": ["calfire-fire-east-chico-20260802"],
   "composed_by": "deterministic"
 }
 ```
@@ -642,7 +650,7 @@ event: ping
 data: {"t":"2026-08-02T18:40:00Z"}
 
 event: feed_update
-data: {"event_id":"sdot-closure-12th-ave-20260802","event_type":"road_closure","headline":"12th Ave closed between E Pike St and E Madison St","severity":"moderate","status":"active","last_verified_at":"2026-08-02T18:18:00Z","source_count":1,"best_tier":"B","confidence_score":0.51,"confidence_label":"developing"}
+data: {"event_id":"cpw-closure-oleander-ave-20260802","event_type":"road_closure","headline":"Oleander Ave closed between E 3rd Ave and E 5th Ave","severity":"severe","status":"active","last_verified_at":"2026-08-02T18:18:00Z","source_count":1,"best_tier":"B","confidence_score":0.51,"confidence_label":"developing"}
 
 event: ping
 data: {"t":"2026-08-02T18:40:20Z"}

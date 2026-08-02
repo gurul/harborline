@@ -1,15 +1,18 @@
 "use client";
 
 import { useEffect, useState } from "react";
-import { SEATTLE_CENTER, type LonLat } from "@harborline/event-schema";
+import { REGION, type LonLat } from "@harborline/event-schema";
 
-/** Downtown Seattle — used until (or unless) the browser hands us a real fix. */
-export const FALLBACK_LOCATION: LonLat = SEATTLE_CENTER;
+/** Region centre — used until (or unless) the browser hands us a real fix. */
+export const FALLBACK_LOCATION: LonLat = REGION.center;
+
+/** Label for the approximate-location chip, e.g. "Chico centre". */
+export const FALLBACK_LABEL = REGION.centerLabel;
 
 export interface UserLocation {
   lon: number;
   lat: number;
-  /** True while we are showing the Seattle-center fallback rather than a device fix. */
+  /** True while we are showing the region-centre fallback rather than a device fix. */
   approximate: boolean;
   /** null until the permission prompt resolves one way or the other. */
   error: string | null;

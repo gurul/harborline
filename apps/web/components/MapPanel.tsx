@@ -15,6 +15,7 @@ import type {
   ResourceType,
 } from "@harborline/event-schema";
 import { fetchEvent, fetchResources } from "../lib/api";
+import { FALLBACK_LABEL } from "../lib/geo";
 import {
   CONFIDENCE_CLASS,
   CONFIDENCE_TEXT,
@@ -522,7 +523,7 @@ export function MapPanel() {
       {user.approximate ? (
         <div className="pointer-events-none relative z-10 px-3 sm:px-4">
           <span className="inline-flex items-center gap-2 rounded-full border border-hl-line bg-hl-bg/80 px-3 py-1.5 text-[11px] text-hl-muted backdrop-blur-md">
-            Using approximate location — Seattle centre
+            Using approximate location — {FALLBACK_LABEL}
           </span>
         </div>
       ) : null}

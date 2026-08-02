@@ -38,9 +38,9 @@ function baseResponse(overrides: Partial<AssistantResponse> = {}): AssistantResp
     recommended_action: null,
     sources: [
       {
-        provider: "Seattle DOT",
+        provider: "Chico Public Works",
         tier: "B",
-        url: "https://demo.harborline.local/closures/12th-ave",
+        url: "https://demo.harborline.local/closures/oleander-ave",
         last_verified_at: new Date(NOW.getTime() - 22 * 60_000).toISOString(),
       },
     ],
@@ -61,8 +61,8 @@ describe("validateResponse — violation classes", () => {
     const evidence = scenarioEvidence();
     const response = baseResponse({
       answer_markdown:
-        "Route via 12th Ave — this route is safe. Head north and then east to the shelter.",
-      recommended_action: "Take 12th Ave north.",
+        "Route via Oleander Ave — this route is safe. Head north and then west to the shelter.",
+      recommended_action: "Take Oleander Ave north.",
     });
 
     const result = validateResponse(response, evidence, NOW);
@@ -76,7 +76,7 @@ describe("validateResponse — violation classes", () => {
     const evidence = scenarioEvidence();
     const response = baseResponse({
       answer_markdown:
-        "The nearest shelter is Calvary Church, about 1.5 km east of you.",
+        "The nearest shelter is Neighborhood Church, about 1.5 km north of you.",
       sources: [],
     });
 
@@ -88,26 +88,26 @@ describe("validateResponse — violation classes", () => {
 
   it("rejects describing a 26-hour-old shelter record as current", () => {
     const { fixtures } = seedScenario();
-    const garfield = asNearby(findResource(fixtures, DEMO_RESOURCE_IDS.garfield));
+    const bidwell = asNearby(findResource(fixtures, DEMO_RESOURCE_IDS.bidwell));
 
     // The ONLY evidence is the stale record — nothing here supports a
     // present-tense claim about the shelter.
     const evidence: EvidenceBundle = {
       events: [],
       resources: [],
-      rejected_resources: [{ resource: garfield, rejected_reason: "stale_status" }],
+      rejected_resources: [{ resource: bidwell, rejected_reason: "stale_status" }],
       source_records: [],
     };
 
     const response = baseResponse({
       answer_markdown:
-        "Garfield Community Center is open right now — head there and check in at the door.",
+        "Bidwell Community Center is open right now — head there and check in at the door.",
       sources: [
         {
-          provider: garfield.provider,
-          tier: garfield.provider_tier,
-          url: garfield.source_url,
-          last_verified_at: garfield.last_verified_at,
+          provider: bidwell.provider,
+          tier: bidwell.provider_tier,
+          url: bidwell.source_url,
+          last_verified_at: bidwell.last_verified_at,
         },
       ],
     });
@@ -117,7 +117,7 @@ describe("validateResponse — violation classes", () => {
     expect(result.ok).toBe(false);
     expect(violationKinds(result.violations)).toContain("stale_claim_as_current");
     expect(
-      result.violations.some((v) => v.includes("Garfield Community Center")),
+      result.violations.some((v) => v.includes("Bidwell Community Center")),
     ).toBe(true);
   });
 
@@ -132,7 +132,7 @@ describe("validateResponse — violation classes", () => {
 
     const response = baseResponse({
       answer_markdown:
-        "Conditions are poor across Capitol Hill. The best thing to do is stay home until the rain passes.",
+        "Smoke is heavy across the Avenues. The best thing to do is stay home until it clears.",
       recommended_action: "Stay home and wait for further updates.",
     });
 

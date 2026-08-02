@@ -52,30 +52,30 @@ describe("get_nearby_resources — recommendation gate", () => {
     resource_type: "shelter",
   });
 
-  it("recommends Calvary Church first", () => {
-    expect(result.recommendable.map((r) => r.name)).toEqual(["Calvary Church"]);
-    expect(result.recommendable[0]!.resource_id).toBe(DEMO_RESOURCE_IDS.calvary);
+  it("recommends Neighborhood Church first", () => {
+    expect(result.recommendable.map((r) => r.name)).toEqual(["Neighborhood Church"]);
+    expect(result.recommendable[0]!.resource_id).toBe(DEMO_RESOURCE_IDS.neighborhood);
     expect(result.recommendable[0]!.operational_status).toBe("open");
     expect(result.recommendable[0]!.distance_m).toBeGreaterThan(0);
   });
 
   it("rejects the 26 h stale shelter with rejected_reason stale_status", () => {
-    const garfield = result.rejected.find(
-      (r) => r.resource.resource_id === DEMO_RESOURCE_IDS.garfield,
+    const bidwell = result.rejected.find(
+      (r) => r.resource.resource_id === DEMO_RESOURCE_IDS.bidwell,
     );
-    expect(garfield).toBeDefined();
-    expect(garfield!.rejected_reason).toBe("stale_status");
+    expect(bidwell).toBeDefined();
+    expect(bidwell!.rejected_reason).toBe("stale_status");
     // Its stored status still reads "open" — freshness, not status, rejected it.
-    expect(garfield!.resource.operational_status).toBe("open");
+    expect(bidwell!.resource.operational_status).toBe("open");
   });
 
   it("rejects the at-capacity shelter with rejected_reason full", () => {
-    const miller = result.rejected.find(
-      (r) => r.resource.resource_id === DEMO_RESOURCE_IDS.miller,
+    const chico = result.rejected.find(
+      (r) => r.resource.resource_id === DEMO_RESOURCE_IDS.chico,
     );
-    expect(miller).toBeDefined();
-    expect(miller!.rejected_reason).toBe("full");
-    expect(miller!.resource.capacity_available).toBe(0);
+    expect(chico).toBeDefined();
+    expect(chico!.rejected_reason).toBe("full");
+    expect(chico!.resource.capacity_available).toBe(0);
   });
 
   it("accounts for every seeded shelter exactly once", () => {
@@ -85,9 +85,9 @@ describe("get_nearby_resources — recommendation gate", () => {
     ].sort();
     expect(ids).toEqual(
       [
-        DEMO_RESOURCE_IDS.calvary,
-        DEMO_RESOURCE_IDS.garfield,
-        DEMO_RESOURCE_IDS.miller,
+        DEMO_RESOURCE_IDS.neighborhood,
+        DEMO_RESOURCE_IDS.bidwell,
+        DEMO_RESOURCE_IDS.chico,
       ].sort(),
     );
   });
@@ -98,7 +98,7 @@ describe("get_resource_status — staleness is reported, not hidden", () => {
 
   it("reports the stale shelter as stale with its age", () => {
     const status = tools.get_resource_status(ctx, {
-      resource_id: DEMO_RESOURCE_IDS.garfield,
+      resource_id: DEMO_RESOURCE_IDS.bidwell,
     });
     expect(status).not.toBeNull();
     expect(status!.stale).toBe(true);
@@ -108,7 +108,7 @@ describe("get_resource_status — staleness is reported, not hidden", () => {
 
   it("reports the recently verified shelter as fresh", () => {
     const status = tools.get_resource_status(ctx, {
-      resource_id: DEMO_RESOURCE_IDS.calvary,
+      resource_id: DEMO_RESOURCE_IDS.neighborhood,
     });
     expect(status!.stale).toBe(false);
     expect(status!.age_label).toBe("8 min ago");

@@ -1,12 +1,12 @@
 # Harborline (Best Use of the Agent @ Sentient Labs Hackathon)
 
 <p align="center">
-  <img src="assets/concept.png" alt="Harborline: dark-mode disaster intelligence with a live map of hazards and routes, a verified live feed, and an evidence-backed assistant" width="100%">
+  <img src="assets/concept.png" alt="Harborline — the calmest point in every crisis. A community-first disaster clarity system powered by Sentient GRID, delivering fast, localized situation summaries and safe movement guidance" width="100%">
 </p>
 
-Harborline puts official alerts, open shelters, road risk, and an evidence-backed assistant for Seattle in one view, built for a person who is stressed and needs a straight answer.
+Harborline puts official alerts, open shelters, road risk, and an evidence-backed assistant in one view, built for a person who is stressed and needs a straight answer. The system is location-agnostic — all geography lives in one region config — and ships configured for California, where wildfire is a fact of life.
 
-Disaster information is scattered across agency feeds, news, and social posts, and the tools that aggregate it tend to hallucinate at exactly the moment accuracy matters. Harborline flips the usual AI architecture. It ingests official emergency feeds into one canonical geospatial event model, with provenance and freshness on every record, and the language model can only restate what those records say. The database decides what is true; the model puts it into words. If Harborline says a shelter is open, that is because Seattle Emergency Management verified it 8 minutes ago, not because a model guessed.
+Disaster information is scattered across agency feeds, news, and social posts, and the tools that aggregate it tend to hallucinate at exactly the moment accuracy matters. Harborline flips the usual AI architecture. It ingests official emergency feeds into one canonical geospatial event model, with provenance and freshness on every record, and the language model can only restate what those records say. The database decides what is true; the model puts it into words. If Harborline says a shelter is open, that is because the county's emergency management agency verified it 8 minutes ago, not because a model guessed.
 
 Built for the **Sentient Labs Hackathon**, where it won **Best Use of the Agent**.
 
@@ -30,7 +30,7 @@ Built for the **Sentient Labs Hackathon**, where it won **Best Use of the Agent*
 
 ## Why it is different
 
-Most disaster chatbots put the model in front: they search, summarize, and hope the summary is right. Harborline puts a verified geospatial event layer in front and treats the model as a constrained interface to it, so a bad model call produces awkward wording instead of a fabricated shelter. The whole demo runs deterministically offline (`DEMO_MODE=1` seeds a Seattle flood scenario), and 51 automated eval tests enforce the acceptance scenario: the stale shelter is rejected, the closed road is eliminated, and the lowest-risk route is recommended with sources and timestamps.
+Most disaster chatbots put the model in front: they search, summarize, and hope the summary is right. Harborline puts a verified geospatial event layer in front and treats the model as a constrained interface to it, so a bad model call produces awkward wording instead of a fabricated shelter. The whole demo runs deterministically offline (`DEMO_MODE=1` seeds a California wildfire scenario over Chico), and 51 automated eval tests enforce the acceptance scenario: the stale shelter is rejected, the closed road is eliminated, and the lowest-risk route is recommended with sources and timestamps.
 
 ## Sentient technology
 
@@ -64,7 +64,7 @@ npm run dev:api    # terminal 1 — API on :8787, DEMO_MODE=1 by default
 npm run dev:web    # terminal 2 — web on :3000
 ```
 
-Open **<http://localhost:3000>**. The seeded scenario gives you an active flood warning, two road closures, three shelters (one stale, one full), and a contradicting social report. Ask the assistant *"Where is the nearest open shelter?"* and watch it reject the stale one.
+Open **<http://localhost:3000>**. The seeded scenario gives you an active wildfire evacuation warning over east Chico, two road closures, three shelters (one stale, one full), and a contradicting social report. Ask the assistant *"Where is the nearest open shelter?"* and watch it reject the stale one.
 
 ## Safety principles
 
@@ -82,11 +82,13 @@ Open **<http://localhost:3000>**. The seeded scenario gives you an active flood 
 | Variable | Scope | Default | Purpose |
 |---|---|---|---|
 | `PORT` | `services/api` | `8787` | API port |
-| `DEMO_MODE` | `services/api` | `1` in dev | Seeds the deterministic Seattle scenario at boot; live connectors keep running. `0` for live-only |
+| `DEMO_MODE` | `services/api` | `1` in dev | Seeds the deterministic California wildfire scenario at boot; live connectors keep running. `0` for live-only |
 | `ANTHROPIC_API_KEY` | `services/api` | unset | Optional. Enables the LLM composer for wording; output still passes the safety validator or is discarded |
 | `ANTHROPIC_MODEL` | `services/api` | `claude-sonnet-5` | Composer model override; only read when the key is set |
 | `ALLOWED_ORIGINS` | `services/api` | unset | Comma-separated CORS allowlist. Unset: localhost-only in dev, deny cross-origin in production |
 | `NEXT_PUBLIC_API_URL` | `apps/web` | `http://localhost:8787` | REST + SSE base URL |
+
+Geography is not scattered through the code: everything location-specific — map centre, connector bounding box, NWS alert area, shelter state filter — lives in a single `RegionConfig` at `packages/event-schema/src/region.ts`. The default region is California, centred on Chico (Butte County). To point Harborline at a different area, change that one file; the seeded demo scenario and the demonstration road graph share the Chico geography and would be re-authored alongside it.
 
 ## Commands
 
@@ -113,7 +115,7 @@ Open **<http://localhost:3000>**. The seeded scenario gives you an active flood 
 
 ## Built with
 
-TypeScript end to end: Next.js 16, React 19, Tailwind 4, MapLibre GL, TanStack Query, Hono, Zod 4, Vitest. Basemap tiles © CARTO, © OpenStreetMap contributors. Alert data © NOAA/NWS, USGS, FEMA/American Red Cross, and Seattle DOT, each retained with its source record. Designed around Sentient's open-source GRID ecosystem (ROMA, OpenDeepSearch) via the adapter boundary in `packages/agent-tools`.
+TypeScript end to end: Next.js 16, React 19, Tailwind 4, MapLibre GL, TanStack Query, Hono, Zod 4, Vitest. Basemap tiles © CARTO, © OpenStreetMap contributors. Alert data © NOAA/NWS, USGS, and FEMA/American Red Cross, each retained with its source record. Designed around Sentient's open-source GRID ecosystem (ROMA, OpenDeepSearch) via the adapter boundary in `packages/agent-tools`.
 
 ## License
 

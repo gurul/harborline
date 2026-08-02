@@ -1,5 +1,6 @@
 import { z } from "zod";
 import {
+  REGION,
   ResourceSchema,
   type Connector,
   type ConnectorResult,
@@ -107,10 +108,9 @@ const UPDATED_KEYS = [
 
 const STATE_KEYS = ["state", "shelter_state", "st", "state_abbr", "statecode", "state_name"];
 
-function isWashington(value: string | null): boolean {
+function isRegionState(value: string | null): boolean {
   if (!value) return false;
-  const v = value.trim().toLowerCase();
-  return v === "wa" || v === "washington" || v === "us-wa" || v === "53";
+  return REGION.stateAliases.includes(value.trim().toLowerCase());
 }
 
 function buildAddress(attrs: Attributes): string | null {
@@ -205,7 +205,7 @@ export const femaSheltersConnector: Connector = {
 
         // Only filter by state when the layer actually carries one.
         const state = pickString(attrs, STATE_KEYS);
-        if (state !== null && !isWashington(state)) continue;
+        if (state !== null && !isRegionState(state)) continue;
 
         const point = coordinatesOf(feature, attrs);
         if (!point) continue;

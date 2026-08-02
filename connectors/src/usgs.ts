@@ -1,6 +1,6 @@
 import { z } from "zod";
 import {
-  PUGET_SOUND_BBOX,
+  REGION,
   bboxContains,
   type CanonicalEvent,
   type Connector,
@@ -87,7 +87,7 @@ export const usgsConnector: Connector = {
         const coords = feature.geometry?.coordinates;
         if (!coords || coords.length < 2) continue;
         const epicenter: LonLat = [coords[0]!, coords[1]!];
-        if (!bboxContains(PUGET_SOUND_BBOX, epicenter)) continue;
+        if (!bboxContains(REGION.bbox, epicenter)) continue;
 
         const props = feature.properties;
         const mag = typeof props.mag === "number" ? props.mag : null;
@@ -98,7 +98,7 @@ export const usgsConnector: Connector = {
         const occurredAt = toIso(props.time) ?? retrieved_at;
         // Honest freshness: the review timestamp, not our fetch time.
         const lastVerifiedAt = toIso(props.updated) ?? occurredAt;
-        const place = props.place?.trim() || "Puget Sound region";
+        const place = props.place?.trim() || REGION.name;
 
         events.push(
           makeEvent(

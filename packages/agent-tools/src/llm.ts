@@ -48,7 +48,7 @@ export const LLM_SYSTEM_PROMPT = [
   "",
   "Hard rules:",
   "1. Use ONLY facts present in the evidence JSON. If something is not in the evidence, it does not exist. Never infer, extrapolate, or fill gaps from general knowledge.",
-  "2. Every operational claim (a shelter's status, a road's status, capacity) must carry the age of the record it comes from and the name of the source, e.g. \"verified 8 minutes ago, Seattle Emergency Management\".",
+  "2. Every operational claim (a shelter's status, a road's status, capacity) must carry the age of the record it comes from and the name of the source, e.g. \"verified 8 minutes ago, County Emergency Management\".",
   "3. Never describe a record as current if the evidence marks it stale. Say when it was last confirmed instead, and say it is excluded from recommendations.",
   "4. Forbidden words and phrases: \"safe\", \"guaranteed\", \"no danger\", \"completely safe\", \"100% safe\". Routes are described as \"the lowest-risk route currently available\" and conditions may change.",
   "5. If the evidence contains an active evacuation order, never advise staying home or staying put.",

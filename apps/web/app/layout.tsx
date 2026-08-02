@@ -5,7 +5,7 @@ import "./globals.css";
 export const metadata: Metadata = {
   title: "Harborline — disaster intelligence",
   description:
-    "Verified, real-time disaster intelligence for Seattle and King County. Structured records determine the facts; language only restates them.",
+    "Verified, real-time disaster intelligence for your community. Structured records determine the facts; language only restates them.",
   applicationName: "Harborline",
 };
 

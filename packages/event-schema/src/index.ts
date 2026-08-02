@@ -1,4 +1,5 @@
 export * from "./geo.js";
+export * from "./region.js";
 export * from "./events.js";
 export * from "./resources.js";
 export * from "./routing.js";

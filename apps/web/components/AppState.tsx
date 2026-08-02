@@ -13,7 +13,7 @@ import type { RoutesResponse } from "../lib/api";
 import { useUserLocation, type UserLocation } from "../lib/geo";
 
 export interface AppStateValue {
-  /** Device fix, or the Seattle-center fallback flagged as approximate. */
+  /** Device fix, or the region-centre fallback flagged as approximate. */
   user: UserLocation;
   /** The routing result currently drawn on the map, if any. */
   route: RoutesResponse | null;

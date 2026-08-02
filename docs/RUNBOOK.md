@@ -43,19 +43,19 @@ Open **<http://localhost:3000>**.
 
 **Step 1 — the map and feed load the seeded state.**
 
-The map shows the Capitol Hill flood polygon (severe, red), two SDOT road closures, and
+The map shows the east-Chico fire polygon (severe, red), two Chico Public Works road closures, and
 three shelter markers with distinct open / full / stale treatments. The live feed pins the
-**NWS flood warning** at the top with an amber accent: ranking is severity descending, then
+**CAL FIRE evacuation warning** at the top with an amber accent: ranking is severity descending, then
 freshness, and the tier A `severe` warning wins both.
 
 Check the same thing from the API:
 
 ```bash
-curl -s "http://localhost:8787/v1/events?lat=47.6145&lon=-122.3180&radius_m=3000" \
+curl -s "http://localhost:8787/v1/events?lat=39.7398&lon=-121.8432&radius_m=3000" \
   | jq '.events[] | {event_id, severity, confidence_label, last_verified_at}'
 ```
 
-The flood should carry `confidence_label: "official"`. The 12th Ave closure should carry a
+The fire should carry `confidence_label: "official"`. The Oleander Ave closure should carry a
 non-null `contradiction_note` and a **lower** label (`developing`) because a tier E social
 report disputes it. That is correct behaviour, not a bug: the dispute reduces the
 `consistency` factor, and the disagreement is displayed rather than averaged away. The
@@ -68,40 +68,40 @@ In the assistant panel use the suggested prompt **"Where is the nearest open she
 ```bash
 curl -s -X POST http://localhost:8787/v1/assistant/ask \
   -H 'Content-Type: application/json' \
-  -d '{"question":"Where is the nearest open shelter?","lat":47.6145,"lon":-122.3180}' | jq
+  -d '{"question":"Where is the nearest open shelter?","lat":39.7398,"lon":-121.8432}' | jq
 ```
 
 Three shelters are considered and two are set aside:
 
 | Shelter | Outcome | Why |
 |---|---|---|
-| Calvary Church Emergency Shelter | **recommended** | `open`, verified 8 min ago, tier B |
-| Miller Community Center | rejected | `operational_status: "full"` |
-| Garfield Community Center | rejected | status 26 h old vs the 24 h shelter freshness policy → `rejected_reason: "stale_status"` |
+| Neighborhood Church | **recommended** | `open`, verified 8 min ago, tier B |
+| Chico Community Center | rejected | `operational_status: "full"` |
+| Bidwell Community Center | rejected | status 26 h old vs the 24 h shelter freshness policy → `rejected_reason: "stale_status"` |
 
-The answer must name the exclusions and must not claim Garfield is closed. "We cannot
+The answer must name the exclusions and must not claim Bidwell is closed. "We cannot
 verify" and "it is closed" are different statements, and only the first is supported by the
 records.
 
 **Step 3 — routing produces candidates, one eliminated.**
 
 ```bash
-curl -s "http://localhost:8787/v1/routes?from_lat=47.6145&from_lon=-122.3180&to_resource_id=shelter-calvary-church" \
+curl -s "http://localhost:8787/v1/routes?from_lat=39.7398&from_lon=-121.8432&to_resource_id=demo-shelter-neighborhood-church" \
   | jq '.candidates[] | {route_id, eliminated, rejected_reason, risk_score}'
 ```
 
-The naively shortest candidate runs up 12th Ave, intersects the active closure, and comes
+The naively shortest candidate runs up Oleander Ave, intersects the active closure, and comes
 back `eliminated: true` with `rejected_reason: "closure_intersection"`. It is **returned**,
 not hidden — the rejection is evidence.
 
 **Step 4 — the recommendation.**
 
 ```bash
-curl -s "http://localhost:8787/v1/routes?from_lat=47.6145&from_lon=-122.3180&to_resource_id=shelter-calvary-church" \
+curl -s "http://localhost:8787/v1/routes?from_lat=39.7398&from_lon=-121.8432&to_resource_id=demo-shelter-neighborhood-church" \
   | jq '.recommendation'
 ```
 
-Assert four things: a non-null recommendation naming Calvary Church; a `summary` using
+Assert four things: a non-null recommendation naming Neighborhood Church; a `summary` using
 **"lowest-risk … currently available"** and never the word "safe"; `evidence_event_ids`
 listing the hazards actually considered; and `"routing": "demonstration"`. In the UI the
 bottom map bar reads *"Lowest-risk route to nearest open shelter — 8 min · avoids 2
@@ -158,7 +158,7 @@ After **3 consecutive failures** a source's breaker opens. Concretely:
   of recommendations on their own.
 
 That last point is the important one. **Silence from a source is never read as "the hazard
-cleared."** A dark NWS feed does not cancel a flood warning; it just means the warning gets
+cleared."** A dark NWS feed does not cancel a hazard warning; it just means the warning gets
 older and eventually stops being described as current. If you want a hazard gone, an
 upstream record must say so.
 
@@ -179,7 +179,7 @@ else is required — no registration ceremony beyond exporting it.
 import {
   type Connector,
   type ConnectorResult,
-  PUGET_SOUND_BBOX,
+  REGION,
   bboxContains,
   computeConfidence,
   confidenceLabel,
@@ -304,7 +304,7 @@ Verify which path answered:
 ```bash
 curl -s -X POST http://localhost:8787/v1/assistant/ask \
   -H 'Content-Type: application/json' \
-  -d '{"question":"What changed in the last hour?","lat":47.6145,"lon":-122.3180}' \
+  -d '{"question":"What changed in the last hour?","lat":39.7398,"lon":-121.8432}' \
   | jq '.composed_by'
 ```
 
@@ -333,7 +333,7 @@ the sync cadence, stale records are excluded from recommendations with
 fresher than the source. **Call before travelling.**
 
 **Routing is demonstration-grade.** The road graph is a hand-authored lattice of ~30–60
-nodes around Capitol Hill and the Central District, not the Seattle street network. Outside
+nodes around the Avenues in Chico, not the full street network. Outside
 that footprint `/v1/routes` returns `422 unroutable`. Travel times are estimates from
 segment length, with no traffic, signals, grade, or turn restrictions. Every recommendation
 carries `"routing": "demonstration"` and phrases itself as "the lowest-risk route currently
@@ -351,8 +351,8 @@ reasoned, not fitted to outcome data. That is precisely why users see four ordin
 and never a percentage. Do not build downstream thresholds on the raw
 `confidence_score`; use `confidence_label`.
 
-**Coverage is Seattle / King County.** Connectors scope to the Puget Sound bbox
-`[-123.3, 46.9, -121.0, 48.3]`. Queries outside it return empty results — correctly, since
+**Coverage is one region at a time.** Connectors scope to the region bbox
+(`REGION.bbox` — California statewide by default). Queries outside it return empty results — correctly, since
 nothing has been verified there.
 
 **No notifications, no offline mode, no community reports.** Harborline is pull-only: it

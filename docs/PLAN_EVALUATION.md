@@ -17,8 +17,8 @@ surface that the MVP does not need.**
    resolves to a structured record with provenance and freshness. The LLM never
    originates facts. This is kept as the load-bearing invariant of the codebase.
 
-2. **Narrow first version.** One geography (Seattle / King County), two hazard classes
-   (flooding, severe storms — plus earthquakes since USGS is free and trivially
+2. **Narrow first version.** One geography (one metro area at a time, via a single region config), two hazard classes
+   (wildfire, severe weather — plus earthquakes since USGS is free and trivially
    integrable), three user needs, three interfaces. Kept exactly.
 
 3. **CAP-grounded canonical schema.** Normalizing every source into one event model
@@ -36,7 +36,7 @@ surface that the MVP does not need.**
 6. **Deferring community reports.** Correct call. Unreviewed community input is the
    single fastest way to poison the trust layer. Deferred to roadmap.
 
-7. **The §20 end-to-end demo flow.** "Flood warning on the map → ask for nearest open
+7. **The §20 end-to-end demo flow.** "Hazard warning on the map → ask for nearest open
    shelter → one shelter rejected as stale → one route rejected for closure
    intersection → recommend lowest-risk route with sources, timestamps, uncertainty."
    This is the product thesis in one flow, and it is implemented here as the
@@ -81,7 +81,7 @@ Real evacuation routing over live road networks is the highest-liability feature
 the plan. Shipping it in an MVP without a data-quality SLA on closures would be
 irresponsible. **Correction:** the MVP implements the full *route-risk scoring
 pipeline* (alternatives → segment/hazard spatial intersection → closure elimination →
-risk scoring → honest language) over a real but bounded Seattle road graph, clearly
+risk scoring → honest language) over a real but bounded demonstration road graph (the Avenues in Chico, CA), clearly
 labeled as demonstration routing. The OSRM/Valhalla adapter is specified but not wired
 to production claims.
 
@@ -106,7 +106,7 @@ corroboration rules.
 | LLM asserts unverified operational fact | High without controls | Safety validator rejects responses containing uncited operational claims; deterministic composer fallback |
 | Upstream schema change (NWS/FEMA) breaks ingestion | Medium | Connector-level Zod validation, circuit breaker, source-health endpoint, raw payload retention |
 | Stale data presented as current | High | Freshness policy per source type; hard display of age; stale records excluded from recommendations |
-| Demo depends on live disaster occurring | Certain | Deterministic seeded scenario (Seattle flood) alongside live connectors |
+| Demo depends on live disaster occurring | Certain | Deterministic seeded scenario (California wildfire) alongside live connectors |
 | Sentient framework churn (beta) | Medium | Adapter boundary; zero hard dependency in MVP |
 
 ---

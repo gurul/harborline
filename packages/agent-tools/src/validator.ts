@@ -119,7 +119,7 @@ export function validateResponse(
    * over a weather_warning, earthquake, power_outage or transit_disruption had
    * no road evidence at all — and the composer quotes upstream headlines,
    * descriptions and official instructions verbatim. A routine NWS instruction
-   * like "Roads are closed east of Broadway" therefore tripped
+   * like "Roads are closed east of Main St" therefore tripped
    * operational_claim_unsupported on deterministic output that was, in fact,
    * fully grounded. Rule 1 exists to catch invented claims; an event the bundle
    * actually contains is not invented, whatever its type.

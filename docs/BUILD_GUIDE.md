@@ -1,7 +1,7 @@
 # Harborline — Comprehensive Build Guide
 
 The implementation spec for the Harborline MVP: a real-time disaster intelligence and
-navigation system for Seattle / King County. **The core product is a verified
+navigation system, location-agnostic behind a single region config (currently California, centred on Chico / Butte County). **The core product is a verified
 geospatial event layer; language models sit above it to explain, never to originate
 facts.**
 
@@ -77,10 +77,10 @@ payloads with Zod, and **never throws to the scheduler** — it returns
 
 | Connector | Upstream | Tier | Notes |
 |---|---|---|---|
-| `nws` | `https://api.weather.gov/alerts/active?area=WA` (GeoJSON; `User-Agent` header required) | A | Map CAP severity/urgency/certainty straight through; keep alert geometry; filter to King County zones when `same`/geocode present |
-| `usgs` | `https://earthquake.usgs.gov/earthquakes/feed/v1.0/summary/2.5_week.geojson` | A | Filter to Puget Sound bbox `[-123.3, 46.9, -121.0, 48.3]`; magnitude → severity mapping |
+| `nws` | `https://api.weather.gov/alerts/active?area=<REGION.nwsArea>` (GeoJSON; `User-Agent` header required) | A | Map CAP severity/urgency/certainty straight through; keep alert geometry |
+| `usgs` | `https://earthquake.usgs.gov/earthquakes/feed/v1.0/summary/2.5_week.geojson` | A | Filter to the region bbox (`REGION.bbox` — California statewide by default); magnitude → severity mapping |
 | `fema-shelters` | FEMA/ARC Open Shelters ArcGIS FeatureServer query (f=geojson) | B | Data syncs daily — set honest `last_verified_at` from attributes, not fetch time; endpoint may be empty/unreachable: return `ok:true, items:[]` on empty, `ok:false` on error |
-| `demo` | Local fixtures | A–E mixed | The deterministic Seattle flood scenario (§8). Enabled by `DEMO_MODE=1` (default in dev) |
+| `demo` | Local fixtures | A–E mixed | The deterministic California wildfire scenario (§8). Enabled by `DEMO_MODE=1` (default in dev) |
 
 Also export `normalize` helpers: dedup key (`event_type` + geometry hash + time-window
 overlap), and `mergeEvents` that increments `source_count` and retains **all** source
@@ -121,15 +121,15 @@ GET /v1/stream                         → SSE: `event: feed_update`, data: Cano
 CORS open for localhost. Port/env via `PORT`, `DEMO_MODE`, `ANTHROPIC_API_KEY`
 (optional).
 
-**Route-risk engine (`packages/agent-tools/src/router.ts`):** bounded Seattle road graph (~30–60 nodes on a
-real street lattice around Capitol Hill/Central District, hand-authored GeoJSON in
-`data/seattle-graph.json`), k-shortest-paths (k≤4) via Dijkstra + penalty rerun;
+**Route-risk engine (`packages/agent-tools/src/router.ts`):** bounded demo road graph (~30–60 nodes on a
+real street lattice around the Avenues in Chico, CA, hand-authored in
+`data/demo-graph.ts`), k-shortest-paths (k≤4) via Dijkstra + penalty rerun;
 segment vs hazard-geometry intersection (point-in-polygon + segment-buffer distance);
 **eliminate** candidates crossing `road_closure`/`evacuation_order` geometries; score
 survivors `travel + hazard_exposure + closure_penalty + stale_data_penalty`; recommend
 lowest. Response language must be "lowest-risk route currently available", never
 "safe". Label: `"routing": "demonstration"` field in every route response. The graph
-data lives in `packages/agent-tools/src/data/seattle-graph.ts`.
+data lives in `packages/agent-tools/src/data/demo-graph.ts`.
 
 ## 5. Agent runtime — `packages/agent-tools`
 
@@ -176,8 +176,8 @@ grid (stacks on mobile):
 1. **Map panel** — MapLibre GL, CARTO dark-matter raster tiles
    (`https://basemaps.cartocdn.com/dark_all/{z}/{x}/{y}.png`, attribution required).
    Hazard markers/polygons colored by severity, shelter markers with open/closed
-   state, user location dot (geolocation with Seattle-center fallback
-   `47.6062, -122.3321`), recommended route as teal line. Filter chips: All /
+   state, user location dot (geolocation with region-centre fallback
+   `REGION.center` — Chico by default), recommended route as teal line. Filter chips: All /
    Hazards / Shelters / Medical / Food & Water. Clicking a marker opens a detail
    card: status, verification label, "Updated N min ago", source, description.
    Bottom bar: "Safest route to nearest open shelter — N min · avoids M hazards"
@@ -203,7 +203,7 @@ SSE with reconnect. All API types imported from `@harborline/event-schema`.
   responses); deterministic composer output always passes; guarantee-language
   regression corpus.
 - **Dedup/normalization:** same NWS alert fetched twice → one event, 1 source record
-  set, no duplicate; two providers describing one flood → merged event with
+  set, no duplicate; two providers describing one fire → merged event with
   `source_count: 2` and both source records retained.
 - **Freshness:** stale shelter excluded from `get_nearby_resources` recommendations
   path; `isStale` boundary tests.
@@ -213,18 +213,18 @@ SSE with reconnect. All API types imported from `@harborline/event-schema`.
 ## 8. Acceptance scenario (the §20 demo — must pass end-to-end)
 
 Seeded demo state (in `connectors/src/demo/fixtures.ts`):
-active flood warning polygon (NWS-style, Tier A) over Capitol Hill; two road closures
-(SDOT, Tier B) — one intersecting the naive best route; three shelters — Calvary
+active wildfire evacuation-warning polygon (CAL FIRE-style, Tier A) over east Chico; two road closures
+(public works, Tier B) — one intersecting the naive best route; three shelters — Neighborhood
 Church (open, verified 8 min ago, Tier B), one **stale** (status 26h old → excluded),
 one full; one Tier C news item; one Tier E unverified social report that contradicts
 one closure (displayed as contradiction, never merged).
 
 Flow asserted in evals and demo-able in the UI:
-1. Map shows flood polygon + 2 closures + shelters; feed ranks official warning first.
+1. Map shows fire polygon + 2 closures + shelters; feed ranks official warning first.
 2. Ask "Where is the nearest open shelter?" → resource tool returns 3, rejects stale
    one (with `rejected_reason: stale_status`), rejects full one.
 3. Routing returns candidates; one eliminated for closure intersection.
-4. Recommendation: Calvary Church via lowest-risk route, with duration, sources,
+4. Recommendation: Neighborhood Church via lowest-risk route, with duration, sources,
    `last_verified_at`, uncertainty notice.
 5. Validator passes the composed answer; a doctored "this route is safe" variant fails.
 

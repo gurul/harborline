@@ -41,7 +41,7 @@ in-process subscription.
 
 ## 2. Real routing engine (OSRM / Valhalla)
 
-Replace the bounded hand-authored Seattle graph with a full street network behind a routing
+Replace the bounded hand-authored demo graph with a full street network behind a routing
 adapter, keeping the existing hazard-intersection, closure-elimination, and risk-scoring
 stages on top.
 
@@ -51,7 +51,7 @@ stages on top.
   `intersecting_event_ids`, `rejected_reason`, and the `routing` literal.
 - **Trigger:** **a data-quality SLA exists for road-closure feeds.** Real evacuation
   routing over live road networks is the highest-liability feature in the plan. What must
-  be true first: a committed refresh cadence and completeness guarantee from SDOT/WSDOT for
+  be true first: a committed refresh cadence and completeness guarantee from Caltrans/local public works for
   closures, a measured false-negative rate on that feed, and a legal review of the guidance
   being given. Until then the `routing: "demonstration"` label stays and the language stays
   "lowest-risk route currently available".
@@ -185,13 +185,13 @@ and lock-screen alert surfaces.
 
 ## 10. Multi-region coverage
 
-Extend beyond Seattle / King County to additional metros, each with its own authority
+Extend beyond the configured region (California, centred on Chico) to additional metros, each with its own authority
 connectors, tier assignments, and geography.
 
-- **Seam:** connectors are already scoped by bounding box (`PUGET_SOUND_BBOX`), and nothing
-  in the canonical schema is Seattle-specific. Region becomes a query dimension and a
+- **Seam:** connectors are already scoped by the region config (`REGION` in `packages/event-schema/src/region.ts`), and nothing
+  in the canonical schema is region-specific. Region becomes a query dimension and a
   connector-registry key.
-- **Trigger:** **the Seattle deployment is operationally boring** — sources stable, breaker
+- **Trigger:** **the first-region deployment is operationally boring** — sources stable, breaker
   trips rare and explained, no open data-quality issues. Every new region multiplies the
   connector surface and the tier-assignment judgement calls. Going wide before the first
   region is dull turns one maintenance problem into *n*.
@@ -206,7 +206,7 @@ connectors, tier assignments, and geography.
 | **Observability (OpenTelemetry, Grafana, Sentry)** | `/v1/health` and structured logs today | Deployment beyond localhost; a pilot serving ~100 users does not need a metrics pipeline |
 | **Confidence calibration** | `computeConfidence` factor weights are isolated and pure | Enough outcome-labelled historical events to fit against. Until then the score stays internal and users see only ordinal labels |
 | **Auth on the API** | Hono middleware slot (per-IP rate limiting shipped in the 2026-08-02 hardening pass) | Any deployment with per-user state |
-| **Cross-provider event dedup in the ingest path** | `dedupKey`/`mergeEvents` are exported from `@harborline/connectors` and covered by evals; ingest currently keys on `event_id` only | A second live source reporting the same hazard class as an existing one (e.g. adding a WSDOT closures connector alongside NWS) |
+| **Cross-provider event dedup in the ingest path** | `dedupKey`/`mergeEvents` are exported from `@harborline/connectors` and covered by evals; ingest currently keys on `event_id` only | A second live source reporting the same hazard class as an existing one (e.g. adding a Caltrans closures connector alongside NWS) |
 | **Prompt-size bound on `raw_payload`** | `capEvidenceForPrompt` caps events/resources/descriptions; `source_records.raw_payload` is still unbounded | Before any tier C–E source whose payloads are not government-schema JSON is added |
 | **Container images and deployment manifests** | `infrastructure/` | A hosting target. `docker-compose.yml` covers local dependencies only — see [infrastructure/README.md](../infrastructure/README.md) |
-| **Additional connectors** (Seattle City Light outages, King County Metro, WSDOT) | the `Connector` interface; see [RUNBOOK.md](./RUNBOOK.md#adding-a-connector) | Each is small and independent — add when a demo or user need calls for that hazard class |
+| **Additional connectors** (PG&E outages, Butte Regional Transit, Caltrans) | the `Connector` interface; see [RUNBOOK.md](./RUNBOOK.md#adding-a-connector) | Each is small and independent — add when a demo or user need calls for that hazard class |

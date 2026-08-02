@@ -1,5 +1,5 @@
 export * from "./store.js";
-export * from "./data/seattle-graph.js";
+export * from "./data/demo-graph.js";
 export * from "./router.js";
 export * from "./tools.js";
 export * from "./planner.js";
