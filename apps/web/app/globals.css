@@ -1,0 +1,154 @@
+@import "tailwindcss";
+@import "maplibre-gl/dist/maplibre-gl.css";
+
+/* ---------------------------------------------------------------------------
+   Harborline palette — near-black canvas, white type, high-signal accents.
+   Exposed to Tailwind as `hl-*` color utilities (bg-hl-panel, text-hl-muted…).
+   --------------------------------------------------------------------------- */
+@theme {
+  --color-hl-bg: #0a0a0c;
+  --color-hl-surface: #0f0f13;
+  --color-hl-panel: #131318;
+  --color-hl-raised: #1a1a21;
+  --color-hl-line: #26262f;
+  --color-hl-line-soft: #1e1e26;
+  --color-hl-muted: #8b8b96;
+  --color-hl-dim: #61616d;
+  --color-hl-amber: #f5a524;
+  --color-hl-amber-soft: #3a2a0d;
+  --color-hl-red: #ef4444;
+  --color-hl-red-soft: #3a1414;
+  --color-hl-green: #22c55e;
+  --color-hl-green-soft: #0f2c1b;
+  --color-hl-teal: #14b8a6;
+  --color-hl-teal-soft: #0c2f2c;
+  --color-hl-blue: #60a5fa;
+  --color-hl-blue-soft: #12233d;
+}
+
+:root {
+  --hl-bg: #0a0a0c;
+  --hl-panel: #131318;
+  --hl-line: #26262f;
+  --hl-muted: #8b8b96;
+  --hl-amber: #f5a524;
+  --hl-red: #ef4444;
+  --hl-green: #22c55e;
+  --hl-teal: #14b8a6;
+  color-scheme: dark;
+}
+
+html,
+body {
+  background-color: var(--hl-bg);
+}
+
+body {
+  -webkit-font-smoothing: antialiased;
+  text-rendering: optimizeLegibility;
+}
+
+/* Calm, low-contrast scrollbars — the panels scroll a lot. */
+* {
+  scrollbar-width: thin;
+  scrollbar-color: #2c2c36 transparent;
+}
+*::-webkit-scrollbar {
+  width: 8px;
+  height: 8px;
+}
+*::-webkit-scrollbar-thumb {
+  background: #2c2c36;
+  border-radius: 9999px;
+}
+*::-webkit-scrollbar-track {
+  background: transparent;
+}
+
+/* Visible, quiet focus ring on every interactive element. */
+:where(a, button, input, textarea, [tabindex]):focus-visible {
+  outline: 2px solid var(--hl-teal);
+  outline-offset: 2px;
+  border-radius: 0.75rem;
+}
+
+/* --- User location dot ---------------------------------------------------- */
+.hl-user-dot {
+  position: relative;
+  width: 18px;
+  height: 18px;
+  display: block;
+}
+.hl-user-dot::before {
+  content: "";
+  position: absolute;
+  inset: 0;
+  border-radius: 9999px;
+  background: rgba(96, 165, 250, 0.45);
+  animation: hl-pulse 2.4s ease-out infinite;
+}
+.hl-user-dot::after {
+  content: "";
+  position: absolute;
+  inset: 5px;
+  border-radius: 9999px;
+  background: #60a5fa;
+  box-shadow: 0 0 0 2px rgba(10, 10, 12, 0.9);
+}
+
+@keyframes hl-pulse {
+  0% {
+    transform: scale(0.6);
+    opacity: 0.9;
+  }
+  70% {
+    transform: scale(1.9);
+    opacity: 0;
+  }
+  100% {
+    transform: scale(1.9);
+    opacity: 0;
+  }
+}
+
+@media (prefers-reduced-motion: reduce) {
+  .hl-user-dot::before {
+    animation: none;
+    transform: scale(1);
+    opacity: 0.35;
+  }
+  *,
+  *::before,
+  *::after {
+    animation-duration: 0.001ms !important;
+    animation-iteration-count: 1 !important;
+    transition-duration: 0.001ms !important;
+  }
+}
+
+/* --- MapLibre chrome, restyled for the dark canvas ------------------------ */
+.maplibregl-ctrl-attrib.maplibregl-compact,
+.maplibregl-ctrl-attrib {
+  background: rgba(10, 10, 12, 0.72) !important;
+  color: var(--hl-muted) !important;
+  border-radius: 9999px !important;
+  font-size: 10px !important;
+}
+.maplibregl-ctrl-attrib a {
+  color: var(--hl-muted) !important;
+}
+.maplibregl-ctrl-group {
+  background: rgba(19, 19, 24, 0.9) !important;
+  border: 1px solid var(--hl-line) !important;
+  border-radius: 0.75rem !important;
+  overflow: hidden;
+}
+.maplibregl-ctrl-group button + button {
+  border-top: 1px solid var(--hl-line) !important;
+}
+.maplibregl-ctrl-group button .maplibregl-ctrl-icon {
+  filter: invert(1) opacity(0.7);
+}
+.maplibregl-canvas:focus {
+  outline: none;
+}

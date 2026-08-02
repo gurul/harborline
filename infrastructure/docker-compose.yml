@@ -1,0 +1,89 @@
+# ─────────────────────────────────────────────────────────────────────────────
+#  Harborline — OPTIONAL local infrastructure
+#
+#  NOTHING HERE IS REQUIRED TO RUN HARBORLINE OR THE DEMO.
+#
+#  The MVP runs entirely in one Node process:
+#    npm run dev:api    # Hono API on :8787, MemoryStore, DEMO_MODE=1
+#    npm run dev:web    # Next.js on :3000
+#
+#  This file exists so the documented upgrade path is a `docker compose up`
+#  away rather than a research task. It provisions the two dependencies the
+#  roadmap calls for:
+#
+#    postgis  — durable, indexed geospatial storage for the future
+#               PostgisStore implementation of the EventStore interface.
+#               Trigger: event volume outgrows process memory, OR more than
+#               one API instance is needed.
+#
+#    redis    — pub/sub fan-out for the SSE change feed across multiple API
+#               instances (MemoryStore's in-process subscribe() cannot cross
+#               a process boundary), plus a cache for connector responses.
+#               Trigger: the same multi-instance condition.
+#
+#  See ./README.md and ../docs/ROADMAP.md for the full re-entry conditions.
+#
+#  Usage (only when you are actually working on the upgrade path):
+#    docker compose -f infrastructure/docker-compose.yml up -d
+#    docker compose -f infrastructure/docker-compose.yml ps      # health
+#    docker compose -f infrastructure/docker-compose.yml down    # keeps volumes
+#    docker compose -f infrastructure/docker-compose.yml down -v # wipes volumes
+# ─────────────────────────────────────────────────────────────────────────────
+
+name: harborline
+
+services:
+  # ───────────────────────────────────────────────────────────────────────────
+  # PostGIS 16 / PostGIS 3.4 — geospatial store for the PostgisStore adapter.
+  # NOT used by the MVP. MemoryStore is the default and needs no container.
+  # ───────────────────────────────────────────────────────────────────────────
+  postgis:
+    image: postgis/postgis:16-3.4
+    container_name: harborline-postgis
+    restart: unless-stopped
+    ports:
+      # host:container — 5432 on the host so a local psql/DATABASE_URL just works.
+      # Change the host side if something else already owns 5432.
+      - "5432:5432"
+    environment:
+      POSTGRES_DB: harborline
+      POSTGRES_USER: harborline
+      # Local development credential only. This container is not intended to be
+      # reachable from outside the host, and no production deployment should
+      # ever use this compose file or this password.
+      POSTGRES_PASSWORD: harborline
+      # Sensible defaults for a fresh local cluster.
+      POSTGRES_INITDB_ARGS: "--encoding=UTF8 --locale=C"
+    volumes:
+      - postgis-data:/var/lib/postgresql/data
+    healthcheck:
+      # pg_isready reports the server accepting connections for our db/user.
+      test: ["CMD-SHELL", "pg_isready -U harborline -d harborline"]
+      interval: 10s
+      timeout: 5s
+      retries: 5
+      start_period: 30s
+
+  # ───────────────────────────────────────────────────────────────────────────
+  # Redis 7 — pub/sub for a multi-instance SSE change feed, and connector cache.
+  # NOT used by the MVP. The single-process store fans out in memory.
+  # ───────────────────────────────────────────────────────────────────────────
+  redis:
+    image: redis:7-alpine
+    container_name: harborline-redis
+    restart: unless-stopped
+    ports:
+      - "6379:6379"
+    command: ["redis-server", "--save", "60", "1", "--appendonly", "no"]
+    volumes:
+      - redis-data:/data
+    healthcheck:
+      test: ["CMD", "redis-cli", "ping"]
+      interval: 10s
+      timeout: 3s
+      retries: 5
+      start_period: 10s
+
+volumes:
+  postgis-data:
+  redis-data:

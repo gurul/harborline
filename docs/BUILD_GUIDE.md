@@ -89,7 +89,8 @@ records (never merge away provenance).
 ## 4. API service — `services/api` (Hono, port 8787)
 
 Structure: `src/index.ts` (Hono app), `src/scheduler.ts` (ingestion),
-`src/routes/*.ts` (route handlers), `src/router/` (route-risk engine).
+`src/routes/*.ts` (route handlers). The route-risk engine lives in
+`@harborline/agent-tools` (shared with tools and evals) — API handlers stay thin.
 
 **Storage:** the `EventStore` interface and its `MemoryStore` implementation live in
 `@harborline/agent-tools` (`src/store.ts`) so tools, the API service, and evals share
@@ -120,14 +121,15 @@ GET /v1/stream                         → SSE: `event: feed_update`, data: Cano
 CORS open for localhost. Port/env via `PORT`, `DEMO_MODE`, `ANTHROPIC_API_KEY`
 (optional).
 
-**Route-risk engine (`src/router/`):** bounded Seattle road graph (~30–60 nodes on a
+**Route-risk engine (`packages/agent-tools/src/router.ts`):** bounded Seattle road graph (~30–60 nodes on a
 real street lattice around Capitol Hill/Central District, hand-authored GeoJSON in
 `data/seattle-graph.json`), k-shortest-paths (k≤4) via Dijkstra + penalty rerun;
 segment vs hazard-geometry intersection (point-in-polygon + segment-buffer distance);
 **eliminate** candidates crossing `road_closure`/`evacuation_order` geometries; score
 survivors `travel + hazard_exposure + closure_penalty + stale_data_penalty`; recommend
 lowest. Response language must be "lowest-risk route currently available", never
-"safe". Label: `"routing": "demonstration"` field in every route response.
+"safe". Label: `"routing": "demonstration"` field in every route response. The graph
+data lives in `packages/agent-tools/src/data/seattle-graph.ts`.
 
 ## 5. Agent runtime — `packages/agent-tools`
 
