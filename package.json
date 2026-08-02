@@ -1,0 +1,24 @@
+{
+  "name": "harborline",
+  "private": true,
+  "version": "0.1.0",
+  "type": "module",
+  "workspaces": [
+    "packages/event-schema",
+    "packages/agent-tools",
+    "connectors",
+    "services/api",
+    "apps/web",
+    "evals"
+  ],
+  "scripts": {
+    "build": "npm run build -w packages/event-schema && npm run build -w packages/agent-tools && npm run build -w connectors && npm run build -w services/api && npm run build -w apps/web",
+    "check": "npm run check --workspaces --if-present",
+    "test": "npm run test -w evals",
+    "dev:api": "npm run dev -w services/api",
+    "dev:web": "npm run dev -w apps/web"
+  },
+  "engines": {
+    "node": ">=20"
+  }
+}

@@ -1,0 +1,25 @@
+{
+  "recorded_at": "2026-08-02T11:08:29.520Z",
+  "steps": [
+    {
+      "name": "evaluate",
+      "estimate_minutes": 30
+    },
+    {
+      "name": "implement-scaffold",
+      "estimate_minutes": 30
+    },
+    {
+      "name": "implement-swarm",
+      "estimate_minutes": 90
+    },
+    {
+      "name": "validate",
+      "estimate_minutes": 45
+    },
+    {
+      "name": "review",
+      "estimate_minutes": 20
+    }
+  ]
+}
