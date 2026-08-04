@@ -94,6 +94,16 @@ export function capEvidenceForPrompt(evidence: EvidenceBundle): EvidenceBundle {
   if (evidence.rejected_resources) {
     capped.rejected_resources = evidence.rejected_resources.slice(0, MAX_PROMPT_RESOURCES);
   }
+  if (evidence.source_records) {
+    // raw_payload is the one field whose size and content Harborline does not
+    // control — it is the upstream provider's document, verbatim. Keeping it
+    // out of the prompt bounds prompt size AND removes the widest
+    // prompt-injection surface; the model needs the normalized fields, not the
+    // raw feed.
+    capped.source_records = evidence.source_records
+      .slice(0, MAX_PROMPT_EVENTS)
+      .map(({ raw_payload: _raw, ...rest }) => rest);
+  }
 
   return capped;
 }

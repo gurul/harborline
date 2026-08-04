@@ -22,16 +22,29 @@ export interface ValidationResult {
   violations: string[];
 }
 
-/** Rule 3 — language that promises an outcome no data can support. */
+/**
+ * Rule 3 — language that promises an outcome no data can support.
+ *
+ * Broader than a closed phrase list: the warning-message literature finds that
+ * neutral factual content outperforms reassuring or persuasive framing (Tale
+ * of Seven Alerts, arXiv:2102.00589), and reassurance is the one register an
+ * official alert never uses — so unlike urgent wording, it is safe to ban
+ * outright on every composition path.
+ */
 export const GUARANTEE_PATTERNS: RegExp[] = [
-  /route is safe/i,
-  /completely safe/i,
-  /totally safe/i,
+  /\broutes? (is|are) safe\b/i,
+  /\b(completely|totally|perfectly|entirely|absolutely) safe\b/i,
   /100% safe/i,
-  /guaranteed/i,
-  /guarantee\b/i,
-  /no danger/i,
-  /it is safe to/i,
+  /guarante/i, // guarantee, guaranteed, guarantees
+  /\bno (danger|risk)\b/i,
+  /\brisk[- ]free\b/i,
+  /\bit is safe to\b/i,
+  /\bsafest\b/i, // only "lowest-risk currently available" is supportable
+  /\byou('| wi)ll be (fine|okay|ok|safe)\b/i,
+  /\bnothing to worry about\b/i,
+  /\bdon'?t (need to )?worry\b/i,
+  /\bclear and passable\b/i,
+  /\bwon'?t (be )?(affect|reach|spread)/i,
 ];
 
 /** Rule 1 — words that assert something about the physical world. */
@@ -177,8 +190,9 @@ export function validateResponse(
 
   // --- Rule 3: guarantee language ------------------------------------------
   for (const pattern of GUARANTEE_PATTERNS) {
-    if (pattern.test(text)) {
-      violations.push(`guarantee_language: answer matches ${pattern}`);
+    const match = text.match(pattern);
+    if (match) {
+      violations.push(`guarantee_language: answer says "${match[0]}" (${pattern})`);
     }
   }
 
@@ -206,6 +220,28 @@ export function validateResponse(
     }
   }
 
+  // --- Rule 7: severe hazards demand a protective action ---------------------
+  // The warning-message literature's five-element model (Mileti & Sorensen,
+  // ORNL-6609; replicated in Carlson et al. 2024): source, hazard, location,
+  // time, protective action — completeness beats length. Sources and time are
+  // enforced by Rule 5; hazard and location are inherent in a grounded
+  // restatement. Protective action is the element an LLM most readily drops
+  // when summarizing, so it is enforced here on the LLM path. The
+  // deterministic templates carry recommended actions by construction.
+  if (response.composed_by === "llm") {
+    const severeActiveHazard = evidence.events.some(
+      (e) =>
+        e.status === "active" &&
+        (e.severity === "severe" || e.severity === "extreme"),
+    );
+    const hasAction = (response.recommended_action ?? "").trim() !== "";
+    if (severeActiveHazard && !hasAction) {
+      violations.push(
+        "missing_protective_action: a severe or extreme hazard is active in evidence but the answer carries no recommended action",
+      );
+    }
+  }
+
   // --- Rule 6: LLM-stated entities must be grounded in the bundle -----------
   // Prompt-injection hardening. A poisoned upstream field can talk the model
   // into emitting a phone number or address that is not in the evidence — the
@@ -227,7 +263,17 @@ function ungroundedEntityViolations(
   text: string,
   evidence: EvidenceBundle,
 ): string[] {
-  const haystack = JSON.stringify(evidence) ?? "";
+  // Ground against the NORMALIZED bundle only. raw_payload is the upstream
+  // provider's document verbatim — the one field an attacker can seed — so a
+  // phone number planted there must not count as grounding for a claim the
+  // model makes about a different entity.
+  const groundable = {
+    ...evidence,
+    source_records: (evidence.source_records ?? []).map(
+      ({ raw_payload: _raw, ...rest }) => rest,
+    ),
+  };
+  const haystack = JSON.stringify(groundable) ?? "";
   const violations: string[] = [];
   const reported = new Set<string>();
 
