@@ -33,10 +33,14 @@ export interface ConfidenceInputs {
  * formula is transparent but uncalibrated.
  */
 export function computeConfidence(inputs: ConfidenceInputs): number {
-  const authority = TIER_WEIGHT[inputs.tier];
+  // Unknown tier fails toward least trust, never toward NaN.
+  const authority = TIER_WEIGHT[inputs.tier] ?? TIER_WEIGHT.E;
 
-  // Linear decay to 0.35 at max age, hard floor 0.2 beyond it.
-  const ageRatio = Math.min(inputs.age_seconds / Math.max(inputs.max_age_seconds, 1), 2);
+  // Linear decay to 0.35 at max age, hard floor 0.2 beyond it. A non-finite
+  // age (unparseable or future-skewed timestamp) is maximally stale.
+  const ageRatio = Number.isFinite(inputs.age_seconds)
+    ? Math.min(inputs.age_seconds / Math.max(inputs.max_age_seconds, 1), 2)
+    : 2;
   const freshness = ageRatio <= 1 ? 1 - 0.65 * ageRatio : 0.2;
 
   // 1 source → 0.85, 2 → 0.95, 3+ → 1.0
@@ -47,6 +51,7 @@ export function computeConfidence(inputs: ConfidenceInputs): number {
   const consistency = inputs.consistency ?? 1;
 
   const score = authority * freshness * corroboration * precision * consistency;
+  if (Number.isNaN(score)) return 0;
   return Math.max(0, Math.min(1, score));
 }
 

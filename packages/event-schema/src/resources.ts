@@ -1,6 +1,6 @@
 import { z } from "zod";
 import { PointSchema } from "./geo.js";
-import { SourceTierSchema } from "./events.js";
+import { ParseableTimestampSchema, SourceTierSchema } from "./events.js";
 
 export const ResourceTypeSchema = z.enum([
   "shelter",
@@ -27,7 +27,7 @@ export const ResourceSchema = z.object({
   accessibility_features: z.array(z.string()),
   pet_policy: z.string().nullable(),
   contact_information: z.string().nullable(),
-  last_verified_at: z.string(),
+  last_verified_at: ParseableTimestampSchema,
   provider: z.string(),
   provider_tier: SourceTierSchema,
   source_url: z.string().nullable(),

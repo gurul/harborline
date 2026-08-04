@@ -55,7 +55,12 @@ export const MAX_FUTURE_SKEW_SECONDS = 600;
  * displayed with its age, it just cannot back a current-status claim.
  */
 export function ageSeconds(lastVerifiedAt: string, now: Date): number {
-  const deltaSeconds = (now.getTime() - new Date(lastVerifiedAt).getTime()) / 1000;
+  const verifiedMs = new Date(lastVerifiedAt).getTime();
+  // An unparseable timestamp must fail STALE, not fresh: NaN would otherwise
+  // poison every comparison downstream (`NaN > maxAge` is false, so isStale
+  // would report a garbage-stamped record as fresh forever).
+  if (Number.isNaN(verifiedMs)) return Number.POSITIVE_INFINITY;
+  const deltaSeconds = (now.getTime() - verifiedMs) / 1000;
   if (deltaSeconds < -MAX_FUTURE_SKEW_SECONDS) return Number.POSITIVE_INFINITY;
   return Math.max(0, deltaSeconds);
 }
@@ -78,6 +83,9 @@ export function resourceMaxAge(resourceType: ResourceType): number {
 
 /** Human-readable age, e.g. "8 min ago", "2 h ago". */
 export function formatAge(lastVerifiedAt: string, now: Date): string {
+  if (Number.isNaN(new Date(lastVerifiedAt).getTime())) {
+    return "timestamp not usable (unparseable)";
+  }
   const s = ageSeconds(lastVerifiedAt, now);
   // Guard the future-skew sentinel so it never renders as "Infinity d ago".
   if (!Number.isFinite(s)) return "timestamp not usable (source clock ahead)";

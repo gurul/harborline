@@ -47,6 +47,20 @@ export const ConfidenceLabelSchema = z.enum([
 ]);
 export type ConfidenceLabel = z.infer<typeof ConfidenceLabelSchema>;
 
+/**
+ * A timestamp string that `new Date()` can actually parse. Parseability — not
+ * strict ISO shape — is the invariant every downstream consumer relies on:
+ * an unparseable timestamp turns into NaN and poisons freshness, confidence,
+ * and sorting. Rejecting at the boundary keeps the poison out; staying looser
+ * than strict ISO avoids dropping real alerts over a formatting quirk, which
+ * would be the dangerous direction for a disaster tool.
+ */
+export const ParseableTimestampSchema = z
+  .string()
+  .refine((s) => !Number.isNaN(new Date(s).getTime()), {
+    message: "timestamp must be parseable as a date",
+  });
+
 export const SourceRecordSchema = z.object({
   source_record_id: z.string(),
   event_id: z.string().nullable(),
@@ -54,8 +68,8 @@ export const SourceRecordSchema = z.object({
   provider_record_id: z.string().nullable(),
   provider_tier: SourceTierSchema,
   source_url: z.string().nullable(),
-  published_at: z.string(), // ISO 8601
-  retrieved_at: z.string(),
+  published_at: ParseableTimestampSchema, // ISO 8601
+  retrieved_at: ParseableTimestampSchema,
   content_hash: z.string(),
   raw_payload: z.unknown().optional(),
 });
@@ -83,9 +97,9 @@ export const CanonicalEventSchema = z.object({
   certainty: CertaintySchema,
   status: EventStatusSchema,
   geometry: GeometrySchema,
-  starts_at: z.string().nullable(),
-  ends_at: z.string().nullable(),
-  last_verified_at: z.string(),
+  starts_at: ParseableTimestampSchema.nullable(),
+  ends_at: ParseableTimestampSchema.nullable(),
+  last_verified_at: ParseableTimestampSchema,
   source_count: z.number().int().min(1),
   /** Highest-authority tier among contributing sources. */
   best_tier: SourceTierSchema,

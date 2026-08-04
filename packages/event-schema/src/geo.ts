@@ -7,26 +7,49 @@ export const LongitudeSchema = z.number().min(-180).max(180);
 /** Latitude, degrees. */
 export const LatitudeSchema = z.number().min(-90).max(90);
 
+/** A [lon, lat] position. Every geometry type gets the same range check. */
+export const PositionSchema = z.tuple([LongitudeSchema, LatitudeSchema]);
+
+/**
+ * A linear ring: at least 4 positions, explicitly closed (first === last).
+ * pointInRing assumes closure; an open ring silently produces wrong
+ * containment — a hazard polygon that fails to eliminate a route.
+ */
+const LinearRingSchema = z
+  .array(PositionSchema)
+  .min(4)
+  .refine(
+    (ring) => {
+      const first = ring[0];
+      const last = ring[ring.length - 1];
+      return (
+        first !== undefined &&
+        last !== undefined &&
+        first[0] === last[0] &&
+        first[1] === last[1]
+      );
+    },
+    { message: "linear ring must be closed (first position === last position)" },
+  );
+
 export const PointSchema = z.object({
   type: z.literal("Point"),
-  coordinates: z.tuple([LongitudeSchema, LatitudeSchema]), // [lon, lat]
+  coordinates: PositionSchema, // [lon, lat]
 });
 
 export const LineStringSchema = z.object({
   type: z.literal("LineString"),
-  coordinates: z.array(z.tuple([z.number(), z.number()])).min(2),
+  coordinates: z.array(PositionSchema).min(2),
 });
 
 export const PolygonSchema = z.object({
   type: z.literal("Polygon"),
-  coordinates: z.array(z.array(z.tuple([z.number(), z.number()])).min(4)).min(1),
+  coordinates: z.array(LinearRingSchema).min(1),
 });
 
 export const MultiPolygonSchema = z.object({
   type: z.literal("MultiPolygon"),
-  coordinates: z
-    .array(z.array(z.array(z.tuple([z.number(), z.number()])).min(4)).min(1))
-    .min(1),
+  coordinates: z.array(z.array(LinearRingSchema).min(1)).min(1),
 });
 
 export const GeometrySchema = z.discriminatedUnion("type", [
@@ -142,6 +165,11 @@ function averageCoords(coords: LonLat[]): LonLat {
 }
 
 export function bboxContains(bbox: BBox, pt: LonLat): boolean {
-  return pt[0] >= bbox[0] && pt[0] <= bbox[2] && pt[1] >= bbox[1] && pt[1] <= bbox[3];
+  const [west, south, east, north] = bbox;
+  if (pt[1] < south || pt[1] > north) return false;
+  // west > east means the box crosses the antimeridian (e.g. Alaska/Pacific
+  // regions); longitude containment then wraps instead of being an interval.
+  if (west > east) return pt[0] >= west || pt[0] <= east;
+  return pt[0] >= west && pt[0] <= east;
 }
 
