@@ -21,6 +21,7 @@ import {
   type ResourceType,
   type SourceRecord,
   type SourceTier,
+  CanonicalEventSchema,
   SEVERITY_RANK,
   computeConfidence,
   confidenceLabel,
@@ -29,6 +30,7 @@ import {
   geometryCentroid,
   haversineMeters,
   pointInGeometry,
+  resourceMaxAge,
 } from "@harborline/event-schema";
 
 /** Authority ordering — A is the highest-authority tier. */
@@ -118,6 +120,13 @@ export interface ResourceQuery {
  * least-recently-verified records once this is exceeded.
  */
 export const MAX_EVENTS = 10_000;
+
+/**
+ * Hard ceiling on retained resources. FEMA's national shelter layer can return
+ * far more rows than one region needs; without a cap the resource map grows
+ * monotonically for process lifetime.
+ */
+export const MAX_RESOURCES = 10_000;
 
 /**
  * Multiple of an event type's freshness budget after which the record is not
@@ -215,8 +224,47 @@ export class MemoryStore implements EventStore {
       status: lifecycleStatus(base, referenceTime),
     };
 
+    // The store is the last gate before a record is served as fact. A merge
+    // result the schema rejects (NaN score, malformed geometry, bad timestamp)
+    // is dropped loudly rather than stored quietly — fail-closed, like the
+    // connector boundary already does.
+    const parsed = CanonicalEventSchema.safeParse(next);
+    if (!parsed.success) {
+      console.error(
+        `MemoryStore: refusing to store invalid merge result for ${next.event_id}`,
+        parsed.error.issues,
+      );
+      return;
+    }
+
     this.events.set(next.event_id, next);
     this.emit(next);
+  }
+
+  /**
+   * Re-derive confidence for the moment of the query. The score written at
+   * upsert freezes the freshness factor at ingest time; without this, a
+   * 3-hour-old fire still reads "official" on the map. Tier, corroboration and
+   * consistency are stable between upserts — only the age term moves.
+   */
+  private decayedAtRead(event: CanonicalEvent, now: Date): CanonicalEvent {
+    const verifiedMs = new Date(event.last_verified_at).getTime();
+    const ageSec = Number.isFinite(verifiedMs)
+      ? Math.max(0, (now.getTime() - verifiedMs) / 1000)
+      : Number.POSITIVE_INFINITY;
+    const score = computeConfidence({
+      tier: event.best_tier,
+      age_seconds: ageSec,
+      max_age_seconds: eventMaxAge(event.event_type),
+      corroborating_sources: event.source_count,
+      consistency: event.contradiction_note ? 0.6 : 1,
+    });
+    if (score === event.confidence_score) return event;
+    return {
+      ...event,
+      confidence_score: score,
+      confidence_label: confidenceLabel(score, event.best_tier),
+    };
   }
 
   /**
@@ -272,13 +320,15 @@ export class MemoryStore implements EventStore {
       return true;
     });
 
-    return matched.sort((a, b) => {
-      const bySeverity = SEVERITY_RANK[b.severity] - SEVERITY_RANK[a.severity];
-      if (bySeverity !== 0) return bySeverity;
-      return (
-        new Date(b.last_verified_at).getTime() - new Date(a.last_verified_at).getTime()
-      );
-    });
+    return matched
+      .map((event) => this.decayedAtRead(event, opts.now))
+      .sort((a, b) => {
+        const bySeverity = SEVERITY_RANK[b.severity] - SEVERITY_RANK[a.severity];
+        if (bySeverity !== 0) return bySeverity;
+        return (
+          new Date(b.last_verified_at).getTime() - new Date(a.last_verified_at).getTime()
+        );
+      });
   }
 
   getEvent(id: string): { event: CanonicalEvent; source_records: SourceRecord[] } | null {
@@ -371,6 +421,33 @@ export class MemoryStore implements EventStore {
       const excess = this.events.size - MAX_EVENTS;
       for (let i = 0; i < excess; i++) {
         this.deleteEvent(oldestFirst[i]!.event_id);
+        deleted++;
+      }
+    }
+
+    // Resources age out on the same policy as events: past
+    // RETENTION_AGE_MULTIPLIER × the type's freshness budget they are no
+    // longer evidence of anything, and the table is capped like the event
+    // table so a national feed cannot grow it without bound.
+    for (const [id, resource] of [...this.resources]) {
+      const retentionSeconds =
+        RETENTION_AGE_MULTIPLIER * resourceMaxAge(resource.resource_type);
+      const verifiedMs = new Date(resource.last_verified_at).getTime();
+      if (!Number.isFinite(verifiedMs)) continue;
+      if ((nowMs - verifiedMs) / 1000 > retentionSeconds) {
+        this.resources.delete(id);
+        deleted++;
+      }
+    }
+
+    if (this.resources.size > MAX_RESOURCES) {
+      const oldestFirst = [...this.resources.values()].sort(
+        (a, b) =>
+          new Date(a.last_verified_at).getTime() - new Date(b.last_verified_at).getTime(),
+      );
+      const excess = this.resources.size - MAX_RESOURCES;
+      for (let i = 0; i < excess; i++) {
+        this.resources.delete(oldestFirst[i]!.resource_id);
         deleted++;
       }
     }

@@ -41,6 +41,29 @@ const ENDPOINT_MARGIN_M = 40;
 export const HAZARD_BUFFER_M = 30;
 
 /**
+ * Standoff radius for POINT-geometry hazards, by severity. A point geometry
+ * says where a hazard is, not how big it is — an extreme event reported as a
+ * single coordinate (an earthquake epicenter, a point-stamped alert) does not
+ * have a 30 m footprint. The wildfire trigger-buffer literature's direction
+ * applies: when extent is unknown, err conservative and widen the standoff
+ * with severity rather than under-blocking.
+ */
+export const POINT_HAZARD_RADIUS_M: Record<CanonicalEvent["severity"], number> = {
+  minor: 30,
+  moderate: 100,
+  severe: 250,
+  extreme: 500,
+};
+
+/** Effective buffer for an event: severity-scaled for points, fixed otherwise. */
+function hazardBufferMeters(event: CanonicalEvent): number {
+  if (event.geometry.type === "Point") {
+    return POINT_HAZARD_RADIUS_M[event.severity] ?? HAZARD_BUFFER_M;
+  }
+  return HAZARD_BUFFER_M;
+}
+
+/**
  * Maximum distance a request point may sit from the nearest graph node.
  *
  * The lattice covers a few square kilometres of the demo neighbourhood. Snapping a point
@@ -171,8 +194,9 @@ export function sampleEdgePoints(
 
 /** True when any interior sample of the edge falls within the event geometry. */
 export function edgeIntersectsEvent(geometry: LonLat[], event: CanonicalEvent): boolean {
+  const bufferM = hazardBufferMeters(event);
   for (const pt of sampleEdgePoints(geometry)) {
-    if (pointInGeometry(pt, event.geometry, HAZARD_BUFFER_M)) return true;
+    if (pointInGeometry(pt, event.geometry, bufferM)) return true;
   }
   return false;
 }
