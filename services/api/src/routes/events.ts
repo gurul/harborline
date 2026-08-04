@@ -3,7 +3,12 @@
  */
 import { Hono } from "hono";
 import { z } from "zod";
-import { EventTypeSchema, type EventType, type LonLat } from "@harborline/event-schema";
+import {
+  EventIdSchema,
+  EventTypeSchema,
+  type EventType,
+  type LonLat,
+} from "@harborline/event-schema";
 import { store } from "../state.js";
 import {
   invalidQueryMessage,
@@ -89,7 +94,14 @@ eventsRoutes.get("/", (c) => {
 });
 
 eventsRoutes.get("/:id", (c) => {
-  const found = store.getEvent(c.req.param("id"));
+  // Ids are bounded and newline-free on ingest; hold lookups to the same
+  // contract so an unbounded or injected param never reaches the store or a
+  // log line.
+  const id = EventIdSchema.safeParse(c.req.param("id"));
+  if (!id.success) {
+    return c.json({ error: "not_found", message: "No event with that id." }, 404);
+  }
+  const found = store.getEvent(id.data);
   if (!found) {
     return c.json({ error: "not_found", message: "No event with that id." }, 404);
   }

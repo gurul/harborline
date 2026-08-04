@@ -204,7 +204,10 @@ assistantRoutes.post("/ask", async (c) => {
   }
 
   if (response) {
-    const check = validateResponse(response, evidence, now);
+    // Validate against a fresh clock, not the pre-call one: the LLM call can
+    // take up to LLM_TIMEOUT_MS, and a record that crossed its freshness
+    // boundary mid-call must be caught here, not validated as still current.
+    const check = validateResponse(response, evidence, new Date());
     if (!check.ok) {
       console.warn(`[assistant] LLM answer rejected: ${check.violations.join("; ")}`);
       response = null;
@@ -214,7 +217,9 @@ assistantRoutes.post("/ask", async (c) => {
   if (!response) {
     let deterministic: AssistantResponse;
     try {
-      deterministic = composeResponse(parsed.data.question, evidence, now);
+      // Fresh clock for the same reason as validation above: this branch may
+      // run after a full LLM timeout.
+      deterministic = composeResponse(parsed.data.question, evidence, new Date());
     } catch (err) {
       // A throwing composer means there is no answer to serve at all.
       console.error("[assistant] deterministic composer threw:", err);
@@ -227,7 +232,7 @@ assistantRoutes.post("/ask", async (c) => {
       );
     }
 
-    const check = validateResponse(deterministic, evidence, now);
+    const check = validateResponse(deterministic, evidence, new Date());
     if (!check.ok) {
       // The deterministic composer is built to pass, so this is a bug in the
       // composer or the validator — but withholding the answer is the worse

@@ -42,16 +42,29 @@ export interface RateLimiter {
 }
 
 /**
- * Identify the caller. `x-forwarded-for` first (the deployment terminates TLS
- * at a proxy), falling back to the socket address. The first XFF entry is the
- * only one a proxy is required to set from the real peer; it is spoofable by a
- * direct client, which is why this is rate limiting and not authorization.
+ * Whether `x-forwarded-for` may identify the caller. Off by default: a direct
+ * client can set XFF to a fresh random value per request, minting itself a new
+ * bucket every time and walking straight past the limiter. Deployments that
+ * really do sit behind a TLS-terminating proxy opt in with TRUST_PROXY=1 —
+ * there the socket address is the proxy's, and XFF is the only real signal.
+ */
+export function trustProxy(env: Record<string, string | undefined> = process.env): boolean {
+  return env.TRUST_PROXY === "1" || env.TRUST_PROXY === "true";
+}
+
+/**
+ * Identify the caller: the socket address, unless TRUST_PROXY is set, in which
+ * case the first `x-forwarded-for` entry (the only one a proxy is required to
+ * set from the real peer). Spoofable only by the party we chose to trust —
+ * which is why this is rate limiting and not authorization.
  */
 export function clientKey(c: Context): string {
-  const forwarded = c.req.header("x-forwarded-for");
-  if (forwarded) {
-    const first = forwarded.split(",")[0]?.trim();
-    if (first) return first;
+  if (trustProxy()) {
+    const forwarded = c.req.header("x-forwarded-for");
+    if (forwarded) {
+      const first = forwarded.split(",")[0]?.trim();
+      if (first) return first;
+    }
   }
   try {
     const address = getConnInfo(c).remote.address;
@@ -67,6 +80,11 @@ export function clientKey(c: Context): string {
  * an isolated limiter with its own bucket map instead of sharing app state.
  */
 export function createRateLimit(options: RateLimitOptions): RateLimiter {
+  if (!Number.isFinite(options.limit) || options.limit < 1) {
+    throw new RangeError(
+      `rate limit "${options.name}": limit must be a finite number >= 1, got ${options.limit}`,
+    );
+  }
   const windowMs = options.windowMs ?? 60_000;
   const capacity = options.limit;
   const refillPerMs = capacity / windowMs;

@@ -18,6 +18,7 @@
 import { Hono } from "hono";
 import { streamSSE } from "hono/streaming";
 import type { CanonicalEvent } from "@harborline/event-schema";
+import { clientKey } from "../rate-limit.js";
 import { isDraining, store } from "../state.js";
 
 export const HEARTBEAT_MS = 25_000;
@@ -25,14 +26,27 @@ const POLL_MS = 500;
 
 /** Concurrent SSE connections this process will hold open. */
 export const MAX_CONCURRENT_STREAMS = 200;
+/**
+ * Concurrent SSE connections from ONE client. Without a per-client cap, a
+ * single caller inside its request-rate budget can hold every global slot and
+ * deny the stream to everyone else.
+ */
+export const MAX_STREAMS_PER_CLIENT = 5;
 /** Events buffered for one slow client before it is asked to resynchronise. */
 export const MAX_PENDING_EVENTS = 500;
 
 let openStreams = 0;
+const openStreamsByClient = new Map<string, number>();
 
 /** Current open-connection count. Exported for tests and diagnostics. */
 export function openStreamCount(): number {
   return openStreams;
+}
+
+function releaseClientSlot(key: string): void {
+  const count = openStreamsByClient.get(key) ?? 0;
+  if (count <= 1) openStreamsByClient.delete(key);
+  else openStreamsByClient.set(key, count - 1);
 }
 
 /**
@@ -52,7 +66,18 @@ streamRoutes.get("/", (c) => {
       503,
     );
   }
+  const client = clientKey(c);
+  if ((openStreamsByClient.get(client) ?? 0) >= MAX_STREAMS_PER_CLIENT) {
+    return c.json(
+      {
+        error: "too_many_streams",
+        message: "Too many concurrent streams from this client.",
+      },
+      429,
+    );
+  }
   openStreams += 1;
+  openStreamsByClient.set(client, (openStreamsByClient.get(client) ?? 0) + 1);
 
   return streamSSE(c, async (stream) => {
     const pending: CanonicalEvent[] = [];
@@ -123,6 +148,7 @@ streamRoutes.get("/", (c) => {
     } finally {
       unsubscribe();
       openStreams -= 1;
+      releaseClientSlot(client);
     }
   });
 });

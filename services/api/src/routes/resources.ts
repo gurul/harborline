@@ -9,6 +9,7 @@
 import { Hono } from "hono";
 import { z } from "zod";
 import {
+  EventIdSchema,
   OperationalStatusSchema,
   ResourceTypeSchema,
   type LonLat,
@@ -73,9 +74,14 @@ resourcesRoutes.get("/", (c) => {
 });
 
 resourcesRoutes.get("/:id", (c) => {
+  // Same bounded, newline-free contract as event ids (see events.ts).
+  const id = EventIdSchema.safeParse(c.req.param("id"));
+  if (!id.success) {
+    return c.json({ error: "not_found", message: "No resource with that id." }, 404);
+  }
   const status = tools.get_resource_status(
     { store, now: new Date() },
-    { resource_id: c.req.param("id") },
+    { resource_id: id.data },
   );
   if (!status) {
     return c.json({ error: "not_found", message: "No resource with that id." }, 404);
