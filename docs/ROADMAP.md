@@ -207,6 +207,17 @@ connectors, tier assignments, and geography.
 | **Confidence calibration** | `computeConfidence` factor weights are isolated and pure | Enough outcome-labelled historical events to fit against. Until then the score stays internal and users see only ordinal labels |
 | **Auth on the API** | Hono middleware slot (per-IP rate limiting shipped in the 2026-08-02 hardening pass) | Any deployment with per-user state |
 | **Cross-provider event dedup in the ingest path** | `dedupKey`/`mergeEvents` are exported from `@harborline/connectors` and covered by evals; ingest currently keys on `event_id` only | A second live source reporting the same hazard class as an existing one (e.g. adding a Caltrans closures connector alongside NWS) |
-| **Prompt-size bound on `raw_payload`** | `capEvidenceForPrompt` caps events/resources/descriptions; `source_records.raw_payload` is still unbounded | Before any tier C–E source whose payloads are not government-schema JSON is added |
+| ~~**Prompt-size bound on `raw_payload`**~~ | Shipped in the 2026-08-04 research-driven hardening pass: `capEvidenceForPrompt` strips `raw_payload`, and the validator's entity grounding ignores it | — |
 | **Container images and deployment manifests** | `infrastructure/` | A hosting target. `docker-compose.yml` covers local dependencies only — see [infrastructure/README.md](../infrastructure/README.md) |
 | **Additional connectors** (PG&E outages, Butte Regional Transit, Caltrans) | the `Connector` interface; see [RUNBOOK.md](./RUNBOOK.md#adding-a-connector) | Each is small and independent — add when a demo or user need calls for that hazard class |
+
+## Research-grounded roadmap
+
+[RESEARCH.md](./RESEARCH.md#roadmap-items-grounded-in-this-corpus-not-yet-implemented)
+carries a further set of protocol-fidelity items derived from the
+citation-verified corpus — CAP Update/Cancel supersession chains, precision
+tiering for the confidence formula, per-route trigger buffers, evacuation
+warning-vs-order as a routing input, temporary-refuge-area fallbacks, the FEMA
+NSS shelter schema, "developing" label time-decay, and
+notify-only-on-material-change. Each entry cites the papers or standards that
+justify it and an effort estimate.

@@ -430,13 +430,19 @@ question + lat/lon
 │     no matching evidence record                              │
 │  2. a record older than its freshness policy described as    │
 │     current                                                  │
-│  3. guarantee language — /\b(completely |totally |100% )?    │
-│     safe\b/i on routes, "guaranteed", "no danger"            │
+│  3. guarantee/reassurance lexicon — "guaranteed", "no risk", │
+│     "perfectly/completely safe", "safest", "you'll be fine", │
+│     "won't reach/spread", ... (officials never reassure;     │
+│     arXiv:2102.00589)                                        │
 │  4. contradicts an active evacuation_order in the evidence   │
 │  5. sources or timestamps omitted entirely                   │
 │  6. LLM-only: phone-number- or street-address-like entities  │
-│     in the answer that appear nowhere in the evidence        │
-│     bundle ("ungrounded_entity")                             │
+│     in the answer that appear nowhere in the NORMALIZED      │
+│     evidence bundle — raw_payload never grounds a claim      │
+│     ("ungrounded_entity")                                    │
+│  7. LLM-only: an active severe/extreme hazard in evidence    │
+│     with no recommended_action — the five-element warning    │
+│     model (ORNL-6609) ("missing_protective_action")          │
 │                                                              │
 │  → { ok: true } | { ok: false, violations: [...] }           │
 └──────────────────────────┬───────────────────────────────────┘
@@ -495,8 +501,52 @@ response bodies at 32 MB via streamed byte counting before `JSON.parse`.
 
 **Known gaps (tracked in ROADMAP.md):** cross-provider dedup (`dedupKey`/`mergeEvents`)
 is exported and tested but not yet wired into the ingest path — two providers reporting
-the same hazard remain two events until then; `capEvidenceForPrompt` does not yet bound
-`source_records.raw_payload`.
+the same hazard remain two events until then.
+
+## 9b. Research-driven hardening pass (2026-08-04)
+
+A second pass grounded in a citation-verified research corpus
+([RESEARCH.md](./RESEARCH.md)) and a full-codebase robustness survey:
+
+**Confidence decays at read time.** The score written at upsert froze the
+freshness factor at ingest, so a 3-hour-old fire kept its "official" label on
+the map indefinitely. `queryEvents` now re-derives the score and label for the
+moment of the query; tier, corroboration, and consistency stay as merged.
+
+**Timestamps fail stale, never fresh.** An unparseable `last_verified_at`
+previously produced NaN in every freshness comparison and read as permanently
+fresh (`NaN > maxAge` is false). It now reads as maximally stale with an honest
+"unparseable" age label, timestamps are validated for parseability at the
+schema boundary, and the confidence formula clamps NaN to 0 and treats an
+unknown tier as tier E.
+
+**Geometry is strict.** All positions (not just `Point`) range-check lon/lat;
+polygon rings must be explicitly closed (the containment test always assumed
+it); `bboxContains` handles antimeridian-crossing regions. Merge results are
+schema-validated before the store serves them.
+
+**Point hazards scale with severity.** A point geometry says where a hazard is,
+not how big it is: route standoff is now 30/100/250/500 m for
+minor/moderate/severe/extreme instead of a flat 30 m, conservative-biased per
+the wildfire trigger-buffer literature (WUIVAC 2007; Cedar Fire 2011).
+
+**Validator (rules 3 and 7 above).** The reassurance lexicon and the
+five-element protective-action rule, both research-grounded; violation messages
+quote the matched phrase. Entity grounding excludes `raw_payload`, and
+`capEvidenceForPrompt` now strips `raw_payload` from source records — closing
+the gap flagged in 9a.
+
+**API availability.** Rate limiting keys on the socket address unless
+`TRUST_PROXY=1` (spoofed `X-Forwarded-For` no longer mints fresh buckets); SSE
+adds a per-client cap (5) beside the global 200; `:id` params are validated
+against the same bounded schema as ingest; assistant responses are validated
+against a post-LLM-call clock so a record cannot cross its freshness boundary
+mid-call and still read as current.
+
+**Lifecycle and client bounds.** `sweepExpired` now also retires and caps
+resources (`MAX_RESOURCES = 10_000`) — the FEMA national layer could grow the
+map without bound; web requests carry a 20 s timeout; SSE frames are
+schema-validated client-side; the live-feed cache is capped at 500 events.
 
 ---
 

@@ -34,7 +34,7 @@ Conventions that hold for every endpoint:
 | `GET` | `/v1/events` | Active canonical events near a point |
 | `GET` | `/v1/events/:id` | One event plus all its source records |
 | `GET` | `/v1/resources` | Nearby resources with `distance_m` |
-| `GET` | `/v1/resources/:id` | One resource plus all its source records |
+| `GET` | `/v1/resources/:id` | One resource plus provenance and its freshness verdict |
 | `GET` | `/v1/routes` | Route candidates and a recommendation |
 | `POST` | `/v1/assistant/ask` | An `AssistantResponse` |
 | `GET` | `/v1/stream` | Server-Sent Events on every store upsert |
@@ -48,12 +48,12 @@ below disagrees with this table, this table wins.
 
 | Boundary | Limit | Behavior when exceeded |
 |---|---|---|
-| Rate limit, all `/v1/*` | 120 req/min per IP (token bucket, first `x-forwarded-for` entry or socket address) | `429 {"error":"rate_limited"}` with `Retry-After` |
+| Rate limit, all `/v1/*` | 120 req/min per IP (token bucket, socket address; first `x-forwarded-for` entry only when `TRUST_PROXY=1`) | `429 {"error":"rate_limited"}` with `Retry-After` |
 | Rate limit, `POST /v1/assistant/ask` | 6 req/min per IP | `429`, same shape |
 | Request body, `/v1/assistant/*` | 8 KiB | `413 {"error":"payload_too_large"}` |
 | List size, `/v1/events` and `/v1/resources` | `limit` query param — integer 1–200, default 100 | Results sliced after ordering |
 | `lat`/`lon` on `/v1/events` | Must be provided together; blank values (`?lat=`) read as absent, never as `0` | `400` naming the actual failing fields |
-| SSE connections | 200 concurrent | `503 {"error":"too_many_streams"}` |
+| SSE connections | 200 concurrent process-wide, 5 per client | `503` (global) or `429` (per-client) `{"error":"too_many_streams"}` |
 | SSE per-connection buffer | 500 pending events | Buffer cleared; one `resync` frame (`{"reason":"buffer_overflow"}`) tells the client to refetch `/v1/events` |
 | Unroutable candidates | `risk_score` is always finite | `no_path` candidates carry `Number.MAX_SAFE_INTEGER`, never `null` |
 | `/v1/health` `last_error` | Redacted to `"timeout" \| "upstream_error" \| "bad_payload" \| null` | Full upstream error text is server-log only |
@@ -287,7 +287,7 @@ curl -s http://localhost:8787/v1/events/cpw-closure-oleander-ave-20260802 | jq
       "source_url": "https://chico.ca.us/publicworks/closures/CPW-2026-08-02-0117",
       "published_at": "2026-08-02T17:10:00Z",
       "retrieved_at": "2026-08-02T18:18:00Z",
-      "content_hash": "sha256:6f1c0a…"
+      "content_hash": "6f1c0a2e"
     },
     {
       "source_record_id": "src-social-2210",
@@ -298,7 +298,7 @@ curl -s http://localhost:8787/v1/events/cpw-closure-oleander-ave-20260802 | jq
       "source_url": null,
       "published_at": "2026-08-02T18:29:00Z",
       "retrieved_at": "2026-08-02T18:31:00Z",
-      "content_hash": "sha256:b2d94e…"
+      "content_hash": "b2d94e17"
     }
   ]
 }
@@ -405,7 +405,9 @@ the assistant's resource tool with `rejected_reason: "stale_status"`.
 
 ## `GET /v1/resources/:id`
 
-One resource plus its source records.
+One resource plus its provenance and freshness verdict. This is the same
+structure the assistant's `get_resource_status` tool sees — the API and the
+assistant never disagree about a shelter.
 
 ```bash
 curl -s http://localhost:8787/v1/resources/demo-shelter-neighborhood-church | jq
@@ -428,19 +430,14 @@ curl -s http://localhost:8787/v1/resources/demo-shelter-neighborhood-church | jq
     "provider_tier": "B",
     "source_url": "https://demo.harborline.local/shelters/neighborhood-church"
   },
-  "source_records": [
-    {
-      "source_record_id": "src-bcem-4417",
-      "event_id": null,
-      "provider": "Butte County Emergency Management",
-      "provider_record_id": "SHELTER-CA-BUTTE-0142",
-      "provider_tier": "B",
-      "source_url": "https://demo.harborline.local/shelters/neighborhood-church",
-      "published_at": "2026-08-02T18:32:00Z",
-      "retrieved_at": "2026-08-02T18:36:00Z",
-      "content_hash": "sha256:04ae71…"
-    }
-  ]
+  "provider": "Butte County Emergency Management",
+  "provider_tier": "B",
+  "source_url": "https://demo.harborline.local/shelters/neighborhood-church",
+  "last_verified_at": "2026-08-02T18:32:00Z",
+  "age_seconds": 240,
+  "age_label": "4 min ago",
+  "max_age_seconds": 86400,
+  "stale": false
 }
 ```
 
@@ -637,7 +634,15 @@ A long-lived SSE connection that emits on every store upsert. Content type is
 | Event name | `data` payload |
 |---|---|
 | `feed_update` | One `CanonicalEvent` (JSON) |
-| `ping` | `{"t":"<iso8601>"}` keep-alive, roughly every 20 s |
+| `resync` | `{"reason":"buffer_overflow"}` — the client fell too far behind and its backlog was dropped; refetch `GET /v1/events` |
+
+Keep-alive is an SSE **comment line** (`: heartbeat`), written every 25 s of
+write inactivity. Comments carry no event name and no data — `EventSource`
+ignores them automatically; raw-stream consumers should skip lines beginning
+with `:`.
+
+The service also caps concurrent streams: 200 process-wide (`503
+too_many_streams`) and 5 per client (`429 too_many_streams`).
 
 ### curl
 
@@ -646,14 +651,13 @@ curl -N -H 'Accept: text/event-stream' http://localhost:8787/v1/stream
 ```
 
 ```
-event: ping
-data: {"t":"2026-08-02T18:40:00Z"}
+: heartbeat
 
 event: feed_update
+id: cpw-closure-oleander-ave-20260802:2026-08-02T18:18:00Z
 data: {"event_id":"cpw-closure-oleander-ave-20260802","event_type":"road_closure","headline":"Oleander Ave closed between E 3rd Ave and E 5th Ave","severity":"severe","status":"active","last_verified_at":"2026-08-02T18:18:00Z","source_count":1,"best_tier":"B","confidence_score":0.51,"confidence_label":"developing"}
 
-event: ping
-data: {"t":"2026-08-02T18:40:20Z"}
+: heartbeat
 ```
 
 `-N` disables curl's buffering; without it nothing appears until the buffer fills.
@@ -692,30 +696,35 @@ emitted while disconnected are not replayed.
 
 ## Errors
 
-Every non-2xx response uses one shape:
+Every non-2xx response uses one flat shape — an `error` slug, a human-readable
+`message`, and (for validation failures) an `issues` array:
 
 ```json
 {
-  "error": {
-    "code": "invalid_request",
-    "message": "Query parameters failed validation.",
-    "details": [
-      { "path": "lat", "message": "Number must be less than or equal to 90" },
-      { "path": "radius_m", "message": "Expected number, received string" }
-    ]
-  }
+  "error": "invalid_query",
+  "message": "Query parameters failed validation.",
+  "issues": [
+    { "path": "lat", "code": "too_big" },
+    { "path": "radius_m", "code": "invalid_type" }
+  ]
 }
 ```
 
-| Status | `code` | When |
+| Status | `error` | When |
 |---|---|---|
-| `400` | `invalid_request` | Zod rejected a query parameter or request body. `details` carries the field-level issues. |
-| `404` | `not_found` | Unknown `event_id`, `resource_id`, or route. |
-| `422` | `unroutable` | `/v1/routes` could not snap the origin or destination to the bounded demo graph. Not the same as "all candidates eliminated", which is a `200` with `recommendation: null`. |
-| `500` | `internal_error` | Unexpected failure, including a response that failed its own output validation. `details` is omitted. |
+| `400` | `invalid_query` | Zod rejected a query parameter. `issues` carries the field paths and codes. |
+| `400` | `invalid_body` | Zod rejected a request body. |
+| `404` | `not_found` | Unknown or malformed `event_id`/`resource_id`, or an unknown route. |
+| `413` | `payload_too_large` | Request body exceeded the body limit. |
+| `422` | `no_viable_route` | `/v1/routes` could not produce a recommendation — either the origin/destination could not snap to the bounded demo graph, or every candidate route was eliminated by an active closure. |
+| `429` | `rate_limited` | Token bucket exhausted (120/min general, 6/min assistant). `Retry-After` is set. |
+| `429`/`503` | `too_many_streams` | Per-client (429) or process-wide (503) SSE cap reached. |
+| `500` | `unsafe_response` | The assistant could not produce an answer satisfying the safety policy. |
+| `500` | `internal_error` | Unexpected failure. `issues` is omitted. |
 
-`details` is present only for `invalid_request` and `unroutable`. The `message` field is
-human-readable and may change; **branch on `code`, never on `message`**.
+`issues` is present only on validation failures, and deliberately carries paths
+and codes but not expected/received details. The `message` field is
+human-readable and may change; **branch on `error`, never on `message`**.
 
 Two deliberate non-errors:
 

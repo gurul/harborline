@@ -20,8 +20,8 @@ Built for the **Sentient Labs Hackathon**, where it won **Best Use of the Agent*
 
 ## What Harborline does
 
-1. **Ingest official sources.** Connectors poll NWS alerts, USGS earthquakes, and FEMA/Red Cross shelters on per-source schedules, with backoff, circuit breakers, and per-source health you can inspect at `/v1/health`.
-2. **Normalize everything into one event model.** Every record becomes a `CanonicalEvent` with CAP-style severity/urgency/certainty, GeoJSON geometry, and a `SourceRecord` trail. Duplicates merge, but the provenance trail survives the merge.
+1. **Ingest official sources.** Connectors poll NWS alerts, USGS earthquakes, and FEMA National Shelter System shelters on per-source schedules, with backoff, circuit breakers, and per-source health you can inspect at `/v1/health`.
+2. **Normalize everything into one event model.** Every record becomes a `CanonicalEvent` with CAP-style severity/urgency/certainty, GeoJSON geometry, and a `SourceRecord` trail. Repeat reports of the same event merge by id with the provenance trail intact; cross-provider dedup is built and eval-tested but not yet wired into ingest (see [docs/ROADMAP.md](./docs/ROADMAP.md)).
 3. **Score trust transparently.** Sources are tiered from A (issuing authority) down to E (unverified report). Internally, confidence is `authority × freshness × corroboration × precision × consistency`. Users only ever see one of four labels: `official / verified / developing / unverified`. There are no invented percentages.
 4. **Enforce freshness.** Every event and resource type has a maximum acceptable age. A shelter whose status is 26 hours old still appears, along with its age, but recommendations reject it with an explicit `stale_status` reason.
 5. **Route around verified hazards.** Candidate routes are intersected with hazard geometry. Routes that cross a closure or evacuation zone are eliminated, the survivors are risk-scored, and the answer is phrased as "the lowest-risk route currently available" rather than "safe".
@@ -30,7 +30,11 @@ Built for the **Sentient Labs Hackathon**, where it won **Best Use of the Agent*
 
 ## Why it is different
 
-Most disaster chatbots put the model in front: they search, summarize, and hope the summary is right. Harborline puts a verified geospatial event layer in front and treats the model as a constrained interface to it, so a bad model call produces awkward wording instead of a fabricated shelter. The whole demo runs deterministically offline (`DEMO_MODE=1` seeds a California wildfire scenario over Chico), and 51 automated eval tests enforce the acceptance scenario: the stale shelter is rejected, the closed road is eliminated, and the lowest-risk route is recommended with sources and timestamps.
+Most disaster chatbots put the model in front: they search, summarize, and hope the summary is right. Harborline puts a verified geospatial event layer in front and treats the model as a constrained interface to it, so a bad model call produces awkward wording instead of a fabricated shelter. The whole demo runs deterministically offline (`DEMO_MODE=1` seeds a California wildfire scenario over Chico), and 68 automated eval tests enforce the acceptance scenario and the hardening invariants: the stale shelter is rejected, the closed road is eliminated, and the lowest-risk route is recommended with sources and timestamps.
+
+## Research grounding
+
+The design and its hardening pass are grounded in a citation-verified corpus of 30 sources — OASIS/FEMA alerting standards, the NIST Camp Fire case study, the warning-message and crisis-informatics literature, and recent arXiv work on LLM safety in disaster response. Every cited source was live-fetched and checked before being relied on. [docs/RESEARCH.md](./docs/RESEARCH.md) records the twelve best-evidenced protocols, where Harborline matches them, which findings became code (the five-element warning completeness rule, the reassurance-language ban, severity-scaled hazard standoffs, read-time confidence decay), and which remain roadmap items.
 
 ## Sentient technology
 
@@ -51,7 +55,7 @@ flowchart LR
     H --> I[Next.js :3000<br/>map · live feed · assistant]
 ```
 
-[docs/ARCHITECTURE.md](./docs/ARCHITECTURE.md) has the full detail: trust tiers, the confidence formula, freshness tables, the route-risk pipeline, and the validator's five rejection rules.
+[docs/ARCHITECTURE.md](./docs/ARCHITECTURE.md) has the full detail: trust tiers, the confidence formula, freshness tables, the route-risk pipeline, and the validator's rejection rules.
 
 ## Quick start
 
@@ -86,6 +90,7 @@ Open **<http://localhost:3000>**. The seeded scenario gives you an active wildfi
 | `ANTHROPIC_API_KEY` | `services/api` | unset | Optional. Enables the LLM composer for wording; output still passes the safety validator or is discarded |
 | `ANTHROPIC_MODEL` | `services/api` | `claude-sonnet-5` | Composer model override; only read when the key is set |
 | `ALLOWED_ORIGINS` | `services/api` | unset | Comma-separated CORS allowlist. Unset: localhost-only in dev, deny cross-origin in production |
+| `TRUST_PROXY` | `services/api` | unset | Set `1` only behind a TLS-terminating proxy: rate limiting then keys on `X-Forwarded-For` instead of the socket address |
 | `NEXT_PUBLIC_API_URL` | `apps/web` | `http://localhost:8787` | REST + SSE base URL |
 
 Geography is not scattered through the code: everything location-specific — map centre, connector bounding box, NWS alert area, shelter state filter — lives in a single `RegionConfig` at `packages/event-schema/src/region.ts`. The default region is California, centred on Chico (Butte County). To point Harborline at a different area, change that one file; the seeded demo scenario and the demonstration road graph share the Chico geography and would be re-authored alongside it.
@@ -98,7 +103,7 @@ Geography is not scattered through the code: everything location-specific — ma
 | `npm run dev:web` | Run the web app on `:3000` |
 | `npm run build` | Build every workspace in dependency order |
 | `npm run check` | `tsc --noEmit` across all workspaces |
-| `npm test` | 51 Vitest evals: safety validator, dedup, freshness, acceptance scenario |
+| `npm test` | 68 Vitest evals: safety validator, dedup, freshness, hardening invariants, acceptance scenario |
 
 ## Project layout
 
@@ -111,7 +116,7 @@ Geography is not scattered through the code: everything location-specific — ma
 | `apps/web` | Next.js 16 UI: MapLibre dark map, live feed, assistant |
 | `evals` | Vitest suites for safety, dedup, freshness, and the end-to-end scenario |
 | `infrastructure` | Optional PostGIS + Redis compose stack for the upgrade path |
-| `docs` | [Build guide](./docs/BUILD_GUIDE.md) · [plan evaluation](./docs/PLAN_EVALUATION.md) · [architecture](./docs/ARCHITECTURE.md) · [API reference](./docs/API.md) · [runbook](./docs/RUNBOOK.md) · [roadmap](./docs/ROADMAP.md) · [Sentient integration](./docs/SENTIENT.md) |
+| `docs` | [Build guide](./docs/BUILD_GUIDE.md) · [plan evaluation](./docs/PLAN_EVALUATION.md) · [architecture](./docs/ARCHITECTURE.md) · [API reference](./docs/API.md) · [runbook](./docs/RUNBOOK.md) · [roadmap](./docs/ROADMAP.md) · [research grounding](./docs/RESEARCH.md) · [Sentient integration](./docs/SENTIENT.md) |
 
 ## Built with
 
@@ -127,8 +132,10 @@ MIT. See [LICENSE](LICENSE).
 > Sentient Labs hackathon project. The hackathon version proved the concept and won
 > the award. The rebuild brings it up to current engineering and research practice:
 > an evidence-first architecture with provenance and freshness on every record, a
-> safety validator gating all model output, 51 automated evals including the full
-> acceptance scenario, a security and correctness hardening pass (rate limiting,
-> bounded SSE, store lifecycle, prompt-injection defenses), and documentation
-> grounded in the current upstream Sentient stack
-> ([docs/SENTIENT.md](./docs/SENTIENT.md)) rather than hackathon-week memory.
+> safety validator gating all model output, 68 automated evals including the full
+> acceptance scenario, a research-driven security and correctness hardening pass
+> (rate limiting, bounded SSE, store lifecycle, prompt-injection defenses,
+> read-time confidence decay, the five-element warning rule — see
+> [docs/RESEARCH.md](./docs/RESEARCH.md)), and documentation grounded in the
+> current upstream Sentient stack ([docs/SENTIENT.md](./docs/SENTIENT.md))
+> rather than hackathon-week memory.
