@@ -3,6 +3,7 @@
 import { useEffect, useState } from "react";
 import { useQuery, useQueryClient, type QueryKey } from "@tanstack/react-query";
 import {
+  CanonicalEventSchema,
   SEVERITY_RANK,
   geometryCentroid,
   haversineMeters,
@@ -62,6 +63,14 @@ function withinRadius(
   }
 }
 
+/**
+ * Cap on events held in one cache entry. Stream frames arrive for the whole
+ * feed's lifetime; without a cap the array grows until the tab dies. The cap
+ * trims the sorted tail — lowest severity, oldest — and the next refetch is
+ * authoritative anyway.
+ */
+export const MAX_CACHED_EVENTS = 500;
+
 function mergeEvent(
   previous: EventsResponse | undefined,
   incoming: CanonicalEvent,
@@ -69,7 +78,7 @@ function mergeEvent(
   const existing = previous?.events ?? [];
   const index = existing.findIndex((e) => e.event_id === incoming.event_id);
   const next = index >= 0 ? existing.with(index, incoming) : [...existing, incoming];
-  return { events: sortEvents(next) };
+  return { events: sortEvents(next).slice(0, MAX_CACHED_EVENTS) };
 }
 
 // --- Ref-counted SSE connection --------------------------------------------
@@ -116,12 +125,13 @@ function open(url: string, connection: Connection): void {
     } catch {
       return;
     }
-    // The stream is a projection of records the store already validated; the
-    // client only guards the shape it indexes on.
-    const candidate = parsed as Partial<CanonicalEvent>;
-    if (!candidate || typeof candidate.event_id !== "string") return;
+    // Validate the frame at the trust boundary, exactly as docs/API.md tells
+    // third-party consumers to. The stream normally carries store-validated
+    // records, but "normally" is not a contract a client should build on.
+    const candidate = CanonicalEventSchema.safeParse(parsed);
+    if (!candidate.success) return;
     for (const listener of connection.eventListeners) {
-      listener(candidate as CanonicalEvent);
+      listener(candidate.data);
     }
   });
 

@@ -64,12 +64,20 @@ export interface HealthResponse {
 
 // --- Transport --------------------------------------------------------------
 
+/** Default per-request timeout. A hung fetch must never hang the UI with it. */
+const REQUEST_TIMEOUT_MS = 20_000;
+
 async function request<T>(
   path: string,
   init?: RequestInit & { signal?: AbortSignal },
 ): Promise<T> {
+  // Callers may pass their own signal (TanStack Query cancellation); combine
+  // it with a hard timeout so even signal-less calls cannot hang forever.
+  const timeout = AbortSignal.timeout(REQUEST_TIMEOUT_MS);
+  const signal = init?.signal ? AbortSignal.any([init.signal, timeout]) : timeout;
   const res = await fetch(`${API_BASE}${path}`, {
     ...init,
+    signal,
     headers: { accept: "application/json", ...(init?.headers ?? {}) },
   });
   if (!res.ok) {
