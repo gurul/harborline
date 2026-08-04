@@ -8,7 +8,7 @@ Harborline puts official alerts, open shelters, road risk, and an evidence-backe
 
 Disaster information is scattered across agency feeds, news, and social posts, and the tools that aggregate it tend to hallucinate at exactly the moment accuracy matters. Harborline flips the usual AI architecture. It ingests official emergency feeds into one canonical geospatial event model, with provenance and freshness on every record, and the language model can only restate what those records say. The database decides what is true; the model puts it into words. If Harborline says a shelter is open, that is because the county's emergency management agency verified it 8 minutes ago, not because a model guessed.
 
-Built for the **Sentient Labs Hackathon (50 Builders)**, where it won **Best Use of the Agent**.
+Built for the **Sentient Labs Hackathon (50 Selected Builders)**, where it won **Best Use of the Agent**.
 
 <p align="center">
   <img src="assets/best-use-of-the-agent.png" alt="The Harborline team accepting the Best Use of the Agent award at the Sentient Labs hackathon" width="100%">
