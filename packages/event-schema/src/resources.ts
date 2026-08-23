@@ -25,6 +25,13 @@ export const ResourceSchema = z.object({
   capacity_total: z.number().int().nullable(),
   capacity_available: z.number().int().nullable(),
   accessibility_features: z.array(z.string()),
+  /**
+   * Public-health caveat for an otherwise-open facility (e.g. a disease
+   * outbreak). Camp Fire precedent: norovirus at four official shelters,
+   * 140+ symptomatic, while every one of them stayed "open". Surfaced with
+   * the recommendation, never hidden behind operational_status.
+   */
+  health_advisory: z.string().nullable().default(null),
   pet_policy: z.string().nullable(),
   contact_information: z.string().nullable(),
   last_verified_at: ParseableTimestampSchema,

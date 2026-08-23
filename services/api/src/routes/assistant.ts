@@ -21,6 +21,7 @@ import {
   capEvidenceForPrompt,
   composeResponse,
   HAZARD_EVENT_TYPES,
+  immediateHazardNote,
   llmCompose,
   llmComposeOpenAi,
   planQuery,
@@ -213,6 +214,17 @@ assistantRoutes.post("/ask", async (c) => {
   }
 
   if (response) {
+    // Benchmark criterion 6 (Camp Fire): the act-now note for an
+    // `immediate`-urgency severe hazard is a system guarantee, not a model
+    // choice — the deterministic composer emits it itself; LLM answers get it
+    // appended here so both paths carry it.
+    const urgent = immediateHazardNote(evidence);
+    if (urgent && !response.answer_markdown.includes("zone-by-zone")) {
+      response = {
+        ...response,
+        answer_markdown: `${response.answer_markdown}\n\n${urgent}`,
+      };
+    }
     // Validate against a fresh clock, not the pre-call one: the LLM call can
     // take up to LLM_TIMEOUT_MS, and a record that crossed its freshness
     // boundary mid-call must be caught here, not validated as still current.

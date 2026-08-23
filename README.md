@@ -30,7 +30,7 @@ Built for the **Sentient Labs Hackathon (50 Selected Builders)**, where it won *
 
 ## Why it is different
 
-Most disaster chatbots put the model in front: they search, summarize, and hope the summary is right. Harborline puts a verified geospatial event layer in front and treats the model as a constrained interface to it, so a bad model call produces awkward wording instead of a fabricated shelter. The whole demo runs deterministically offline (`DEMO_MODE=1` seeds a California wildfire scenario over Chico), and 81 automated eval tests enforce the acceptance scenario and the hardening invariants: the stale shelter is rejected, the closed road is eliminated, and the lowest-risk route is recommended with sources and timestamps.
+Most disaster chatbots put the model in front: they search, summarize, and hope the summary is right. Harborline puts a verified geospatial event layer in front and treats the model as a constrained interface to it, so a bad model call produces awkward wording instead of a fabricated shelter. The whole demo runs deterministically offline (`DEMO_MODE=1` seeds a California wildfire scenario over Chico), and 87 automated eval tests enforce the acceptance scenario and the hardening invariants: the stale shelter is rejected, the closed road is eliminated, and the lowest-risk route is recommended with sources and timestamps.
 
 ## Research grounding
 
@@ -42,7 +42,7 @@ Harborline's demo is a wildfire evacuation near Chico, Butte County. The deadlie
 
 [docs/BENCHMARK.md](./docs/BENCHMARK.md) maps the real timeline onto the simulation **hour by hour** — first 911 call (06:25), fire reaching town before most evacuation orders (07:44 vs 07:46–09:03), Feather River Hospital evacuating patients mid-surgery while its roster still read "open", every egress artery closing, shelters overflowing into the Walmart parking lot — and derives **12 testable criteria** from those documented failures. An executable replay (`evals/src/real2sim-campfire.test.ts`) asserts Harborline's behavior at each mapped moment.
 
-Current scorecard: **5 criteria met, 4 partial, 3 gaps/out-of-scope**. The benchmark already produces code, not just grades: its first product is the **Feather River rule** — a fresh, nominally "open" facility located inside an active severe hazard footprint is rejected outright (`rejected_reason: "inside_hazard_zone"`), because the most dangerous record in a disaster is the one that is accurate about status and silent about geography. The remaining gaps (refuge-in-place fallback, shelter health advisories, spread-rate flagging, receiver-city load balancing) are tracked in the benchmark as the roadmap to maximize.
+Current scorecard: **8 criteria met, 3 partial, 1 out-of-scope**. The benchmark produces code, not just grades. Its first product is the **Feather River rule** — a fresh, nominally "open" facility located inside an active severe hazard footprint is rejected outright (`rejected_reason: "inside_hazard_zone"`), because the most dangerous record in a disaster is the one that is accurate about status and silent about geography. A maximization pass then closed three more criteria: **refuge-in-place guidance** when every route is eliminated (the NIST temporary-refuge-area pattern), an **act-now note** when a severe hazard is marked `immediate` (the fire beat Paradise's first zone order by two minutes), and **shelter health advisories plus a named plan-B destination** (norovirus ran through four "open" shelters while overflow arrivals improvised in a parking lot). What remains partial is scope- or data-bound — receiver-city load balancing, assisted-evacuation dispatch — and is argued row by row in the benchmark.
 
 ## Sentient technology
 
@@ -113,7 +113,7 @@ Geography is not scattered through the code: everything location-specific — ma
 | `npm run dev:web` | Run the web app on `:3000` |
 | `npm run build` | Build every workspace in dependency order |
 | `npm run check` | `tsc --noEmit` across all workspaces |
-| `npm test` | 81 Vitest evals: safety validator, dedup, freshness, hardening invariants, acceptance scenario, Camp Fire real-to-sim benchmark |
+| `npm test` | 87 Vitest evals: safety validator, dedup, freshness, hardening invariants, acceptance scenario, Camp Fire real-to-sim benchmark |
 
 ## Project layout
 
@@ -143,7 +143,7 @@ MIT. See [LICENSE](LICENSE).
 > Sentient Labs hackathon project. The hackathon version proved the concept and won
 > the award. The rebuild brings it up to current engineering and research practice:
 > an evidence-first architecture with provenance and freshness on every record, a
-> safety validator gating all model output, 81 automated evals including the full
+> safety validator gating all model output, 87 automated evals including the full
 > acceptance scenario, a research-driven security and correctness hardening pass
 > (rate limiting, bounded SSE, store lifecycle, prompt-injection defenses,
 > read-time confidence decay, the five-element warning rule — see

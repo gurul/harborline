@@ -262,10 +262,48 @@ function routeSection(evidence: EvidenceBundle): string[] {
       } removed from consideration (${reasons.join(", ")}).`,
     );
   }
+  // Camp Fire lesson (benchmark criterion 3): when every candidate is cut,
+  // say so plainly and give refuge-in-place direction instead of silence.
+  // NIST TN 2252 documents 31 improvised temporary refuge areas — parking
+  // lots and cleared ground — holding 1,200+ people whose routes had closed.
+  if (
+    !route.recommendation &&
+    route.candidates.length > 0 &&
+    route.candidates.every((c) => c.eliminated)
+  ) {
+    lines.push(
+      "No route is currently verified as passable. If leaving by road is not possible, " +
+        "do not wait in a vehicle in the hazard's path: move to the nearest large cleared, " +
+        "non-vegetated open area — a large parking lot, sports field, or wide paved area — " +
+        "and re-check for an updated route.",
+    );
+  }
   if (route.candidates.length > 0) {
     lines.push("Routing is a bounded demonstration graph, not a live traffic service.");
   }
   return lines;
+}
+
+/**
+ * Camp Fire lesson (benchmark criterion 6): the fire outran the staged
+ * zone-by-zone ordering — it entered Paradise at 07:44, two minutes before the
+ * town's first zone order. When an active blocking hazard is marked
+ * `immediate` by its issuing source, say plainly that current conditions,
+ * not the arrival of a zone instruction, are the trigger to act.
+ */
+export function immediateHazardNote(evidence: EvidenceBundle): string | null {
+  const pressing = evidence.events.find(
+    (event) =>
+      event.status === "active" &&
+      HAZARD_EVENT_TYPES.includes(event.event_type) &&
+      event.urgency === "immediate" &&
+      (event.severity === "severe" || event.severity === "extreme"),
+  );
+  if (!pressing) return null;
+  return (
+    `**${pressing.headline}** is marked immediate by its issuing source: ` +
+    "act on current conditions now rather than waiting for a zone-by-zone instruction."
+  );
 }
 
 function composeNearestShelter(evidence: EvidenceBundle, now: Date): string[] {
@@ -289,6 +327,10 @@ function composeNearestShelter(evidence: EvidenceBundle, now: Date): string[] {
     const cap = capacityLine(top);
     if (cap) details.push(cap);
     if (top.address) details.push(`Address: ${top.address}`);
+    // Camp Fire lesson (benchmark criterion 7): four shelters ran a norovirus
+    // outbreak while officially open — a health advisory is surfaced, never
+    // hidden behind an "open" status.
+    if (top.health_advisory) details.push(`Health advisory: ${top.health_advisory}`);
     if (top.accessibility_features.length > 0) {
       details.push(`Accessibility: ${top.accessibility_features.join(", ")}`);
     }
@@ -296,14 +338,22 @@ function composeNearestShelter(evidence: EvidenceBundle, now: Date): string[] {
     if (top.contact_information) details.push(`Contact: ${top.contact_information}`);
     for (const d of details) lines.push(`- ${d}`);
 
-    for (const other of recommendable.slice(1)) {
+    // Camp Fire lesson (benchmark criterion 11): shelters overflowed and
+    // arrivals had no plan B — name the fallback destination explicitly.
+    recommendable.slice(1).forEach((other, index) => {
+      const advisory = other.health_advisory
+        ? ` Health advisory: ${other.health_advisory}.`
+        : "";
+      const base = `${other.name}, ${distanceLabel(other.distance_m)} away (verified ${formatAge(
+        other.last_verified_at,
+        now,
+      )}, ${other.provider}).${advisory}`;
       lines.push(
-        `- Also available: ${other.name}, ${distanceLabel(other.distance_m)} away (verified ${formatAge(
-          other.last_verified_at,
-          now,
-        )}, ${other.provider}).`,
+        index === 0
+          ? `- If it is full when you arrive, next option: ${base}`
+          : `- Also available: ${base}`,
       );
-    }
+    });
   }
 
   if (rejected.length > 0) {
@@ -420,6 +470,18 @@ function composeResourceQuery(evidence: EvidenceBundle, now: Date): string[] {
 }
 
 function composeAnswer(
+  intent: QueryIntent,
+  evidence: EvidenceBundle,
+  byEvent: Map<string, SourceRecord[]>,
+  now: Date,
+): string[] {
+  const lines = composeAnswerBody(intent, evidence, byEvent, now);
+  const urgent = immediateHazardNote(evidence);
+  if (urgent) lines.push(urgent);
+  return lines;
+}
+
+function composeAnswerBody(
   intent: QueryIntent,
   evidence: EvidenceBundle,
   byEvent: Map<string, SourceRecord[]>,

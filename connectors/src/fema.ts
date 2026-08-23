@@ -254,6 +254,9 @@ export const femaSheltersConnector: Connector = {
           capacity_total: capacityTotal,
           capacity_available: capacityAvailable,
           accessibility_features: accessibilityFeatures(attrs),
+          // The NSS layer carries no health-status column; advisories would
+          // come from a public-health source, not this feed.
+          health_advisory: null,
           pet_policy: pickString(attrs, [
             "pet_accommodations",
             "pet_friendly",

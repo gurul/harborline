@@ -43,7 +43,7 @@ the replay eval, 🟡 = verified by probe/inspection, ⛔ = documented gap.
 | ~09:00+ | Road状态 changed faster than any channel tracked | `road_closure` records expire from the recommendation basis after 4 h; every answer carries the record's age and "conditions may change" | ✅ replay perishability |
 | Mid-morning | Skyway contraflow delayed awaiting CHP; initiated manually by a local official | Out of scope: Harborline informs civilians; it does not command traffic operations. Surfaced as a limitation | ⛔ scope |
 | Nov 8 evening | Shelters overflow; spontaneous Walmart-lot camp forms | At-capacity shelter rejected as `full` with capacity numbers shown; stale statuses rejected after 24 h with age shown | ✅ replay + acceptance scenario |
-| Nov 14–17 | Norovirus at 4 shelters (140+ symptomatic); camp cleared while official shelters degraded | Health-status of shelters is not modelled beyond open/full/closed — a `health_advisory` flag on resources is a gap | ⛔ roadmap |
+| Nov 14–17 | Norovirus at 4 shelters (140+ symptomatic); camp cleared while official shelters degraded | `health_advisory` on resources, surfaced with every recommendation and on the named plan-B option — an "open" status can no longer hide a public-health caveat | ✅ replay criteria 7+11 |
 | Days–weeks | Chico absorbs ~20,000 people; regional housing saturates | Receiver-capacity balancing across cities is not modelled | ⛔ roadmap |
 
 ## Criteria scorecard
@@ -54,34 +54,47 @@ Derived from the documented failures; each row cites its real-event basis.
 |---|---|---|---|
 | 1 | Never route toward/through the hazard, even if shortest | **Met** (verified hazards) | Router eliminates `closure_intersection` / `evacuation_zone`; severity-scaled point standoffs. Projected-spread modelling: roadmap |
 | 2 | Road/status data treated as perishable | **Met** | Freshness budgets per type; ages on every claim; stale ⇒ excluded from recommendations |
-| 3 | State plainly when no safe route exists | **Partial** | Null recommendation + explicit reason ("every candidate eliminated"); temporary-refuge-area fallback guidance is roadmap |
+| 3 | State plainly when no safe route exists | **Met** | When every candidate is eliminated the answer says "no route is currently verified as passable" and gives refuge-in-place direction (cleared open ground — the NIST-documented TRA pattern); eval-pinned |
 | 4 | Never gate advice on alert delivery | **Met** | Answers derive from records, not order coverage; "do not stay" issued with no order on file |
 | 5 | Detect channel failure rather than assume delivery | **Partial** | Per-source ingest health with circuit breakers is monitored and surfaced (`/v1/health`); outbound alert channels (WEA) are out of Harborline's scope |
-| 6 | Flag when staged plans are outpaced by spread rate | **Gap** | No spread-rate model; roadmap |
-| 7 | Shelter recommendations capacity- and health-aware | **Partial** | Capacity: met (full ⇒ rejected, numbers shown). Health advisories (norovirus): gap |
+| 6 | Flag when staged plans are outpaced by spread rate | **Met** (via CAP urgency) | An active severe/extreme hazard marked `immediate` appends "act on current conditions now rather than waiting for a zone-by-zone instruction" to every answer; eval-pinned. A quantitative spread-rate model stays roadmap |
+| 7 | Shelter recommendations capacity- and health-aware | **Met** | Capacity: full ⇒ rejected, numbers shown. Health: `health_advisory` field on resources, surfaced with the recommendation ("Health advisory: …"), never hidden behind `open`; eval-pinned |
 | 8 | Exclude facilities inside the hazard or themselves evacuating | **Met (new)** | `inside_hazard_zone` rejection added from this benchmark; fresh+open+in-zone ⇒ rejected |
 | 9 | Proactive capacity actions (contraflow) | **Out of scope** | Civilian-information system, not traffic command |
 | 10 | Prioritize mobility-limited users | **Partial** | Accessibility features surfaced per shelter; assisted-evacuation dispatch out of scope |
-| 11 | Balance destinations against receiver capacity | **Gap** | Nearest-verified-open with capacity shown; multi-city load balancing roadmap |
+| 11 | Balance destinations against receiver capacity | **Partial** | The answer now names the explicit plan B ("If it is full when you arrive, next option: …") with its own capacity and freshness; multi-city load balancing needs region-scale occupancy data and stays roadmap |
 | 12 | Provenance + timestamp on every advisory; contradictions reconciled explicitly | **Met** | Sources/tier/`last_verified_at` on every answer; `contradiction_note` keeps the official record standing while showing the dispute |
 
-**Score: 5 met · 4 partial · 3 gap/out-of-scope** (of 12). The benchmark's
-direct product in this pass is criterion 8 — the **Feather River rule** —
-implemented as the `inside_hazard_zone` rejection in
-`packages/agent-tools/src/tools.ts` and pinned by the two eval suites above.
+**Score: 8 met · 3 partial · 1 out-of-scope** (of 12). The benchmark has
+produced code in two passes:
 
-## Where the gaps go next
+- **Pass 1 — the Feather River rule (criterion 8):** `inside_hazard_zone`
+  rejection in `packages/agent-tools/src/tools.ts`.
+- **Pass 2 — maximization:** refuge-in-place guidance when every route is cut
+  (criterion 3), the `immediate`-urgency act-now note (criterion 6), the
+  `health_advisory` field surfaced with every recommendation (criterion 7),
+  and the named plan-B destination (criterion 11), all in
+  `packages/agent-tools/src/composer.ts` + `packages/event-schema`, each
+  pinned by `evals/src/real2sim-campfire.test.ts` and validated by
+  `validateResponse`.
 
-1. **Refuge-in-place guidance (criterion 3):** when every route is eliminated,
-   direct to the nearest defensible open area — NIST documents 31 temporary
-   refuge areas holding 1,200+ civilians. Needs a refuge-area resource type.
-2. **Health advisories on shelters (criterion 7):** a `health_advisory` field
-   on `Resource`, tier-B sourced from county public health.
-3. **Spread-rate awareness (criterion 6):** the fire covered 7 miles in ~90
-   minutes; a growth-rate annotation on fire events would let the composer say
-   "spreading faster than staged evacuation assumes".
-4. **Receiver capacity (criterion 11):** aggregate shelter capacity by town and
-   bias recommendations away from saturated destinations.
+## What remains, and why
+
+1. **Criterion 5 (channel-failure detection) — partial by scope.** Harborline
+   monitors its own ingest channels (per-source health, circuit breakers,
+   `/v1/health`); outbound alert delivery (WEA/CodeRED) belongs to the alert
+   originator, not a civilian information layer.
+2. **Criterion 10 (mobility prioritization) — partial by scope.** Accessibility
+   features are surfaced per shelter; dispatching assisted evacuation is an
+   emergency-operations function.
+3. **Criterion 11 (receiver-city balancing) — partial pending data.** Needs
+   region-scale occupancy aggregation across towns; the demo region has one
+   receiver city.
+4. **Criterion 9 (contraflow) — out of scope.** Traffic command, not civilian
+   information.
+5. **Criterion 6 quantitative extension:** a true spread-rate model (fire
+   perimeter growth over successive records) would upgrade the CAP-urgency
+   trigger to a measured one.
 
 ## Sources
 
