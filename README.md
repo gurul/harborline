@@ -36,6 +36,14 @@ Most disaster chatbots put the model in front: they search, summarize, and hope 
 
 The design and its hardening pass are grounded in a citation-verified corpus of 30 sources — OASIS/FEMA alerting standards, the NIST Camp Fire case study, the warning-message and crisis-informatics literature, and recent arXiv work on LLM safety in disaster response. Every cited source was live-fetched and checked before being relied on. [docs/RESEARCH.md](./docs/RESEARCH.md) records the twelve best-evidenced protocols, where Harborline matches them, which findings became code (the five-element warning completeness rule, the reassurance-language ban, severity-scaled hazard standoffs, read-time confidence decay), and which remain roadmap items.
 
+## Evaluation: benchmarked against the real Camp Fire
+
+Harborline's demo is a wildfire evacuation near Chico, Butte County. The deadliest documented event of exactly that shape happened there — the **2018 Camp Fire** (84 deaths, ~52,000 displaced, every egress artery out of Paradise closed by fire at least once). So the evaluation standard is not a synthetic rubric: it is the documented record of how that response actually unfolded, drawn from the Butte County DA's investigation, NIST TN 2252's evacuation-and-traffic analysis, and the county Grand Jury findings.
+
+[docs/BENCHMARK.md](./docs/BENCHMARK.md) maps the real timeline onto the simulation **hour by hour** — first 911 call (06:25), fire reaching town before most evacuation orders (07:44 vs 07:46–09:03), Feather River Hospital evacuating patients mid-surgery while its roster still read "open", every egress artery closing, shelters overflowing into the Walmart parking lot — and derives **12 testable criteria** from those documented failures. An executable replay (`evals/src/real2sim-campfire.test.ts`) asserts Harborline's behavior at each mapped moment.
+
+Current scorecard: **5 criteria met, 4 partial, 3 gaps/out-of-scope**. The benchmark already produces code, not just grades: its first product is the **Feather River rule** — a fresh, nominally "open" facility located inside an active severe hazard footprint is rejected outright (`rejected_reason: "inside_hazard_zone"`), because the most dangerous record in a disaster is the one that is accurate about status and silent about geography. The remaining gaps (refuge-in-place fallback, shelter health advisories, spread-rate flagging, receiver-city load balancing) are tracked in the benchmark as the roadmap to maximize.
+
 ## Sentient technology
 
 Harborline was designed around Sentient's open-source GRID ecosystem, and one leg of that design is now implemented: **Harborline serves as a Sentient Chat agent** through the official Sentient Agent Framework. `services/sentient-agent` is a thin Python adapter (`sentient-agent-framework` 0.3.0) that exposes the framework's SSE `POST /assist` protocol and re-emits Harborline's already-validated answers as Sentient Chat events — `EVIDENCE` (sources with tiers and ages), a streamed `ANSWER`, `ACTION`, and `CAVEATS`. No decision logic lives in the adapter; it is pure presentation over the evidence-gated pipeline. `packages/agent-tools` still defines the adapter slot where ROMA (recursive meta-agent investigations of conflicting reports) and OpenDeepSearch (open-web retrieval beyond the structured feeds) plug in behind the same tool contract — agent orchestration sits above the evidence layer; it does not replace it. [docs/SENTIENT.md](./docs/SENTIENT.md) covers the full design and current status of each integration.
@@ -119,7 +127,7 @@ Geography is not scattered through the code: everything location-specific — ma
 | `apps/web` | Next.js 16 UI: MapLibre dark map, live feed, assistant |
 | `evals` | Vitest suites for safety, dedup, freshness, and the end-to-end scenario |
 | `infrastructure` | Optional PostGIS + Redis compose stack for the upgrade path |
-| `docs` | [Build guide](./docs/BUILD_GUIDE.md) · [plan evaluation](./docs/PLAN_EVALUATION.md) · [architecture](./docs/ARCHITECTURE.md) · [API reference](./docs/API.md) · [runbook](./docs/RUNBOOK.md) · [roadmap](./docs/ROADMAP.md) · [research grounding](./docs/RESEARCH.md) · [Sentient integration](./docs/SENTIENT.md) |
+| `docs` | [Build guide](./docs/BUILD_GUIDE.md) · [plan evaluation](./docs/PLAN_EVALUATION.md) · [architecture](./docs/ARCHITECTURE.md) · [API reference](./docs/API.md) · [runbook](./docs/RUNBOOK.md) · [roadmap](./docs/ROADMAP.md) · [research grounding](./docs/RESEARCH.md) · [Camp Fire benchmark](./docs/BENCHMARK.md) · [Sentient integration](./docs/SENTIENT.md) |
 
 ## Built with
 
