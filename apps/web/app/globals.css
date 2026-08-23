@@ -65,6 +65,14 @@ body {
   background: transparent;
 }
 
+/* Hide the scrollbar on compact horizontal chip rows. */
+.scrollbar-none {
+  scrollbar-width: none;
+}
+.scrollbar-none::-webkit-scrollbar {
+  display: none;
+}
+
 /* Visible, quiet focus ring on every interactive element. */
 :where(a, button, input, textarea, [tabindex]):focus-visible {
   outline: 2px solid var(--hl-teal);

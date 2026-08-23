@@ -268,6 +268,43 @@ describe("real2sim: shelter health advisories and the named plan B (criteria 7 +
   });
 });
 
+describe("real2sim: accessibility-aware ranking (criterion 10)", () => {
+  // Camp Fire victims skewed elderly and mobility-limited (average age ~72).
+  // When the question asks for accessibility, a verified-accessible shelter
+  // outranks a marginally nearer one with no recorded accessibility features.
+  const { store, ctx } = seedScenario();
+  const template = findResource(seedScenario().fixtures, DEMO_RESOURCE_IDS.neighborhood);
+  store.upsertResource({
+    ...template,
+    resource_id: "sim-shelter-no-access",
+    name: "Corner Store Annex",
+    location: { type: "Point", coordinates: [USER_LON, USER_LAT + 0.001] },
+    operational_status: "open",
+    accessibility_features: [],
+    last_verified_at: ctx.now.toISOString(),
+  });
+
+  it("prefers the accessible shelter when the question asks for it", () => {
+    const question = "Where is the nearest wheelchair accessible shelter?";
+    const evidence = gatherEvidence(ctx, question, [USER_LON, USER_LAT]);
+    const response = composeResponse(question, evidence, ctx.now);
+    expect(response.answer_markdown).toContain(
+      "The nearest open shelter is **Neighborhood Church**",
+    );
+    expect(response.answer_markdown).toContain("Accessibility: wheelchair_accessible");
+    const check = validateResponse(response, evidence, ctx.now);
+    expect(check.violations).toEqual([]);
+  });
+
+  it("keeps plain distance order when accessibility is not asked about", () => {
+    const evidence = gatherEvidence(ctx, SHELTER_QUESTION, [USER_LON, USER_LAT]);
+    const response = composeResponse(SHELTER_QUESTION, evidence, ctx.now);
+    expect(response.answer_markdown).toContain(
+      "The nearest open shelter is **Corner Store Annex**",
+    );
+  });
+});
+
 describe("real2sim: shelter capacity honesty (criterion 7)", () => {
   // Oroville Nazarene reached 352 occupants; the spontaneous Walmart camp
   // formed because official shelters overflowed. A full shelter is surfaced

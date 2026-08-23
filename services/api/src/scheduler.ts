@@ -57,6 +57,7 @@ function initialHealth(connector: Connector): SourceHealth {
     last_error: null,
     consecutive_failures: 0,
     circuit_open: false,
+    last_success_records: null,
   };
 }
 
@@ -128,6 +129,14 @@ async function runOnce(state: ConnectorState, target: EventStore): Promise<boole
     state.health.last_error = null;
     state.health.consecutive_failures = 0;
     state.health.circuit_open = false;
+    // "Healthy" alone cannot distinguish "fetched fine" from "fetched fine
+    // but yielded zero records" — the green-but-empty failure mode that hid
+    // both the NWS zone-geometry drop and the FEMA timestamp drop. Publish
+    // what the fetch actually contributed so monitoring can catch it.
+    state.health.last_success_records = {
+      events: result.events.length,
+      resources: result.resources.length,
+    };
     return true;
   } catch (err) {
     // A connector should never throw. If one does, treat it as a failed fetch.

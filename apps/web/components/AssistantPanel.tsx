@@ -202,19 +202,23 @@ export function AssistantPanel() {
       </div>
 
       <div className="border-t border-hl-line-soft px-4 pt-3 pb-4">
-        <div className="mb-3 flex flex-wrap gap-2">
-          {SUGGESTED_PROMPTS.map((prompt) => (
-            <button
-              key={prompt}
-              type="button"
-              disabled={pending}
-              onClick={() => void submit(prompt)}
-              className="inline-flex min-h-11 items-center rounded-full border border-hl-line bg-hl-raised px-3.5 text-[11px] text-hl-muted transition-colors hover:text-white disabled:opacity-50"
-            >
-              {prompt}
-            </button>
-          ))}
-        </div>
+        {/* One compact scrollable row, and only while the chat is empty —
+            once a conversation exists the user knows what to ask. */}
+        {messages.length === 0 ? (
+          <div className="scrollbar-none mb-2.5 flex gap-1.5 overflow-x-auto pb-0.5">
+            {SUGGESTED_PROMPTS.map((prompt) => (
+              <button
+                key={prompt}
+                type="button"
+                disabled={pending}
+                onClick={() => void submit(prompt)}
+                className="inline-flex shrink-0 items-center rounded-full border border-hl-line bg-hl-raised px-3 py-1.5 text-[11px] whitespace-nowrap text-hl-muted transition-colors hover:text-white disabled:opacity-50"
+              >
+                {prompt}
+              </button>
+            ))}
+          </div>
+        ) : null}
 
         <form onSubmit={onSubmit} className="flex items-center gap-2">
           <label htmlFor="assistant-input" className="sr-only">

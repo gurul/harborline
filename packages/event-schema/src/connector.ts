@@ -31,4 +31,12 @@ export interface SourceHealth {
   last_error: string | null;
   consecutive_failures: number;
   circuit_open: boolean;
+  /**
+   * Records the last successful fetch actually contributed (events +
+   * resources). "Healthy" alone cannot distinguish "fetched fine" from
+   * "fetched fine but yielded 0 of N upstream records" — the silent-channel
+   * failure class the Camp Fire's undetected WEA outage exemplifies
+   * (benchmark criterion 5). Null until the first success.
+   */
+  last_success_records: { events: number; resources: number } | null;
 }

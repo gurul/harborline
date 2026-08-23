@@ -56,45 +56,48 @@ Derived from the documented failures; each row cites its real-event basis.
 | 2 | Road/status data treated as perishable | **Met** | Freshness budgets per type; ages on every claim; stale ⇒ excluded from recommendations |
 | 3 | State plainly when no safe route exists | **Met** | When every candidate is eliminated the answer says "no route is currently verified as passable" and gives refuge-in-place direction (cleared open ground — the NIST-documented TRA pattern); eval-pinned |
 | 4 | Never gate advice on alert delivery | **Met** | Answers derive from records, not order coverage; "do not stay" issued with no order on file |
-| 5 | Detect channel failure rather than assume delivery | **Partial** | Per-source ingest health with circuit breakers is monitored and surfaced (`/v1/health`); outbound alert channels (WEA) are out of Harborline's scope |
+| 5 | Detect channel failure rather than assume delivery | **Met** (within scope) | Per-source health now includes `last_success_records` — a source that fetches fine but contributes zero records is visible at a glance, the "green-but-empty" mode that hid both connector bugs found in this audit. Outbound alert channels (WEA) belong to the alert originator |
 | 6 | Flag when staged plans are outpaced by spread rate | **Met** (via CAP urgency) | An active severe/extreme hazard marked `immediate` appends "act on current conditions now rather than waiting for a zone-by-zone instruction" to every answer; eval-pinned. A quantitative spread-rate model stays roadmap |
 | 7 | Shelter recommendations capacity- and health-aware | **Met** | Capacity: full ⇒ rejected, numbers shown. Health: `health_advisory` field on resources, surfaced with the recommendation ("Health advisory: …"), never hidden behind `open`; eval-pinned |
 | 8 | Exclude facilities inside the hazard or themselves evacuating | **Met (new)** | `inside_hazard_zone` rejection added from this benchmark; fresh+open+in-zone ⇒ rejected |
 | 9 | Proactive capacity actions (contraflow) | **Out of scope** | Civilian-information system, not traffic command |
-| 10 | Prioritize mobility-limited users | **Partial** | Accessibility features surfaced per shelter; assisted-evacuation dispatch out of scope |
+| 10 | Prioritize mobility-limited users | **Met** (within scope) | Accessibility features surfaced per shelter, and when the question asks about accessibility a verified-accessible shelter outranks a marginally nearer one without recorded features (eval-pinned). Dispatching assisted evacuation is an emergency-operations function |
 | 11 | Balance destinations against receiver capacity | **Partial** | The answer now names the explicit plan B ("If it is full when you arrive, next option: …") with its own capacity and freshness; multi-city load balancing needs region-scale occupancy data and stays roadmap |
 | 12 | Provenance + timestamp on every advisory; contradictions reconciled explicitly | **Met** | Sources/tier/`last_verified_at` on every answer; `contradiction_note` keeps the official record standing while showing the dispute |
 
-**Score: 8 met · 3 partial · 1 out-of-scope** (of 12). The benchmark has
-produced code in two passes:
+**Score: 10 met · 1 partial · 1 out-of-scope** (of 12). The benchmark has
+produced code in three passes:
 
 - **Pass 1 — the Feather River rule (criterion 8):** `inside_hazard_zone`
   rejection in `packages/agent-tools/src/tools.ts`.
 - **Pass 2 — maximization:** refuge-in-place guidance when every route is cut
-  (criterion 3), the `immediate`-urgency act-now note (criterion 6), the
-  `health_advisory` field surfaced with every recommendation (criterion 7),
-  and the named plan-B destination (criterion 11), all in
-  `packages/agent-tools/src/composer.ts` + `packages/event-schema`, each
-  pinned by `evals/src/real2sim-campfire.test.ts` and validated by
-  `validateResponse`.
+  (criterion 3), the `immediate`-urgency act-now note on both composer paths
+  (criterion 6), the `health_advisory` field surfaced with every
+  recommendation (criterion 7), and the named plan-B destination
+  (criterion 11), all in `packages/agent-tools/src/composer.ts` +
+  `packages/event-schema`, each pinned by
+  `evals/src/real2sim-campfire.test.ts` and validated by `validateResponse`.
+- **Pass 3 — convergence:** `last_success_records` on per-source health so a
+  green-but-empty channel is detectable (criterion 5), and
+  accessibility-aware shelter ranking when the question asks for it
+  (criterion 10).
 
 ## What remains, and why
 
-1. **Criterion 5 (channel-failure detection) — partial by scope.** Harborline
-   monitors its own ingest channels (per-source health, circuit breakers,
-   `/v1/health`); outbound alert delivery (WEA/CodeRED) belongs to the alert
-   originator, not a civilian information layer.
-2. **Criterion 10 (mobility prioritization) — partial by scope.** Accessibility
-   features are surfaced per shelter; dispatching assisted evacuation is an
-   emergency-operations function.
-3. **Criterion 11 (receiver-city balancing) — partial pending data.** Needs
-   region-scale occupancy aggregation across towns; the demo region has one
-   receiver city.
-4. **Criterion 9 (contraflow) — out of scope.** Traffic command, not civilian
+1. **Criterion 11 (receiver-city balancing) — partial pending data.** The
+   answer names an explicit plan-B destination with capacity and freshness;
+   region-scale balancing needs occupancy aggregation across towns, and the
+   demo region has one receiver city.
+2. **Criterion 9 (contraflow) — out of scope.** Traffic command, not civilian
    information.
-5. **Criterion 6 quantitative extension:** a true spread-rate model (fire
+3. **Criterion 6 quantitative extension:** a true spread-rate model (fire
    perimeter growth over successive records) would upgrade the CAP-urgency
    trigger to a measured one.
+
+This is the convergence point for the current scope and data sources: every
+remaining row requires either an operational role Harborline deliberately does
+not hold, or data (multi-city occupancy, perimeter history) no current feed
+provides.
 
 ## Sources
 

@@ -539,12 +539,35 @@ function recommendedAction(
   }
 }
 
+const ACCESSIBILITY_QUERY = /\b(wheelchair|accessib\w*|ada|disab\w*|mobility)\b/i;
+
+/**
+ * Camp Fire lesson (benchmark criterion 10): the victims skewed elderly and
+ * mobility-limited. When the question itself asks about accessibility, a
+ * verified-accessible shelter outranks a marginally nearer one with no
+ * recorded accessibility features. Records only — nothing is inferred.
+ */
+function preferAccessible(
+  question: string,
+  evidence: EvidenceBundle,
+): EvidenceBundle {
+  if (!ACCESSIBILITY_QUERY.test(question)) return evidence;
+  const resources = [...(evidence.resources ?? [])].sort((a, b) => {
+    const aRank = a.accessibility_features.length > 0 ? 0 : 1;
+    const bRank = b.accessibility_features.length > 0 ? 0 : 1;
+    if (aRank !== bRank) return aRank - bRank;
+    return a.distance_m - b.distance_m;
+  });
+  return { ...evidence, resources };
+}
+
 export function composeResponse(
   question: string,
   evidence: EvidenceBundle,
   now: Date,
 ): AssistantResponse {
   const { intent } = planQuery(question);
+  evidence = preferAccessible(question, evidence);
   const byEvent = recordsByEvent(evidence);
 
   const lines = hasEvidence(evidence)
