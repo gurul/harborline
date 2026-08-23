@@ -9,10 +9,12 @@ import type {
   MapLayerMouseEvent,
   Marker as MapLibreMarker,
 } from "maplibre-gl";
-import type {
-  CanonicalEvent,
-  NearbyResource,
-  ResourceType,
+import {
+  geometryCentroid,
+  type CanonicalEvent,
+  type EventType,
+  type NearbyResource,
+  type ResourceType,
 } from "@harborline/event-schema";
 import { fetchEvent, fetchResources } from "../lib/api";
 import { FALLBACK_LABEL } from "../lib/geo";
@@ -36,17 +38,81 @@ type MapLibreModule = typeof import("maplibre-gl");
 const SRC_HAZARDS = "hl-hazards";
 const SRC_CLOSURES = "hl-closures";
 const SRC_EVENT_POINTS = "hl-event-points";
+const SRC_EVENT_CHIPS = "hl-event-chips";
 const SRC_RESOURCES = "hl-resources";
 const SRC_ROUTE = "hl-route";
 
 const LYR_HAZARD_FILL = "hl-hazard-fill";
+const LYR_HAZARD_GLOW = "hl-hazard-glow";
 const LYR_HAZARD_OUTLINE = "hl-hazard-outline";
+const LYR_CLOSURE_CASING = "hl-closure-casing";
 const LYR_CLOSURE_LINE = "hl-closure-line";
+const LYR_ROUTE_GLOW = "hl-route-glow";
 const LYR_ROUTE_LINE = "hl-route-line";
+const LYR_ROUTE_DASH = "hl-route-dash";
 const LYR_EVENT_POINT = "hl-event-point";
 const LYR_RESOURCE_POINT = "hl-resource-point";
+const LYR_EVENT_CHIP = "hl-event-chip";
+const LYR_RESOURCE_CHIP = "hl-resource-chip";
+
+/**
+ * Icon chips only exist at street zooms; below this the dot/fill layers carry
+ * the signal. Native `minzoom` on the symbol layers — no JS zoom listener.
+ */
+const CHIP_MIN_ZOOM = 12.3;
 
 const EMPTY: FeatureCollection = { type: "FeatureCollection", features: [] };
+
+/**
+ * Icon per event type. Chips are rendered as GL symbol layers from
+ * canvas-rasterized images (`map.addImage`), the pattern MapLibre's own
+ * examples use for custom markers. Symbols share the exact GL transform of
+ * every other layer, so chips can never drift off their coordinates the way
+ * DOM-positioned markers can.
+ */
+const EVENT_ICON: Record<EventType, string> = {
+  fire: "🔥",
+  flood: "🌊",
+  road_closure: "🚧",
+  power_outage: "⚡",
+  earthquake: "🫨",
+  landslide: "⛰️",
+  shelter_open: "🏠",
+  shelter_full: "🏠",
+  transit_disruption: "🚌",
+  evacuation_order: "📢",
+  weather_warning: "🌪️",
+};
+
+const RESOURCE_ICON: Record<ResourceType, string> = {
+  shelter: "🏠",
+  hospital: "🏥",
+  cooling_center: "❄️",
+  food_water: "🍽️",
+  charging: "🔌",
+  transport_hub: "🚌",
+};
+
+/**
+ * Marching-ants phases (from the MapLibre ant-path example): stepping through
+ * these dasharray patterns makes a dashed line appear to flow along the route.
+ */
+const DASH_SEQUENCE: number[][] = [
+  [0, 4, 3],
+  [0.5, 4, 2.5],
+  [1, 4, 2],
+  [1.5, 4, 1.5],
+  [2, 4, 1],
+  [2.5, 4, 0.5],
+  [3, 4, 0],
+  [0, 0.5, 3, 3.5],
+  [0, 1, 3, 3],
+  [0, 1.5, 3, 2.5],
+  [0, 2, 3, 2],
+  [0, 2.5, 3, 1.5],
+  [0, 3, 3, 1],
+  [0, 3.5, 3, 0.5],
+];
 
 type FilterKey = "all" | "hazards" | "shelters" | "medical" | "food_water";
 
@@ -86,14 +152,20 @@ function eventFeature(event: CanonicalEvent): Feature {
   };
 }
 
+function chipImageId(emoji: string, color: string): string {
+  return `hl-chip:${emoji}:${color}`;
+}
+
 function buildEventLayers(events: CanonicalEvent[]): {
   hazards: FeatureCollection;
   closures: FeatureCollection;
   points: FeatureCollection;
+  chips: FeatureCollection;
 } {
   const hazards: Feature[] = [];
   const closures: Feature[] = [];
   const points: Feature[] = [];
+  const chips: Feature[] = [];
 
   for (const event of events) {
     if (event.status !== "active") continue;
@@ -110,31 +182,109 @@ function buildEventLayers(events: CanonicalEvent[]): {
         points.push(feature);
         break;
     }
+    // One icon chip at the geometry centroid, whatever the geometry kind.
+    try {
+      const centre = geometryCentroid(event.geometry);
+      const emoji = EVENT_ICON[event.event_type] ?? "⚠️";
+      const color = SEVERITY_COLOR[event.severity];
+      chips.push({
+        type: "Feature",
+        id: `chip-${event.event_id}`,
+        geometry: { type: "Point", coordinates: centre as [number, number] },
+        properties: {
+          event_id: event.event_id,
+          emoji,
+          color,
+          icon: chipImageId(emoji, color),
+        },
+      });
+    } catch {
+      // Geometry we cannot place gets no chip; the base layers still draw it.
+    }
   }
 
   return {
     hazards: { type: "FeatureCollection", features: hazards },
     closures: { type: "FeatureCollection", features: closures },
     points: { type: "FeatureCollection", features: points },
+    chips: { type: "FeatureCollection", features: chips },
   };
 }
 
 function buildResourceLayer(resources: NearbyResource[]): FeatureCollection {
   return {
     type: "FeatureCollection",
-    features: resources.map((resource) => ({
-      type: "Feature",
-      id: resource.resource_id,
-      geometry: resource.location as GeoJSONGeometry,
-      properties: {
-        resource_id: resource.resource_id,
-        resource_type: resource.resource_type,
-        name: resource.name,
-        operational_status: resource.operational_status,
-        color: RESOURCE_STATUS_COLOR[resource.operational_status],
-      },
-    })),
+    features: resources.map((resource) => {
+      const emoji = RESOURCE_ICON[resource.resource_type] ?? "📍";
+      const color = RESOURCE_STATUS_COLOR[resource.operational_status];
+      return {
+        type: "Feature",
+        id: resource.resource_id,
+        geometry: resource.location as GeoJSONGeometry,
+        properties: {
+          resource_id: resource.resource_id,
+          resource_type: resource.resource_type,
+          name: resource.name,
+          operational_status: resource.operational_status,
+          emoji,
+          color,
+          icon: chipImageId(emoji, color),
+        },
+      };
+    }),
   };
+}
+
+/**
+ * Rasterize one chip (glow ring + dark disc + emoji) to an ImageData for
+ * `map.addImage`. Drawn at 2x and registered with pixelRatio 2 so it renders
+ * as a crisp ~36 CSS px chip.
+ */
+function makeChipImage(emoji: string, color: string): ImageData | null {
+  const size = 76;
+  const canvas = document.createElement("canvas");
+  canvas.width = size;
+  canvas.height = size;
+  const g = canvas.getContext("2d");
+  if (!g) return null;
+  const cx = size / 2;
+  const radius = 26;
+
+  g.shadowColor = color;
+  g.shadowBlur = 10;
+  g.fillStyle = "rgba(19, 19, 24, 0.92)";
+  g.beginPath();
+  g.arc(cx, cx, radius, 0, Math.PI * 2);
+  g.fill();
+  g.shadowBlur = 0;
+
+  g.lineWidth = 4;
+  g.strokeStyle = color;
+  g.beginPath();
+  g.arc(cx, cx, radius, 0, Math.PI * 2);
+  g.stroke();
+
+  g.font = '26px "Apple Color Emoji", "Segoe UI Emoji", "Noto Color Emoji", sans-serif';
+  g.textAlign = "center";
+  g.textBaseline = "middle";
+  g.fillText(emoji, cx, cx + 1);
+
+  return g.getImageData(0, 0, size, size);
+}
+
+/** Register every chip image a feature collection references, once. */
+function ensureChipImages(map: MapLibreMap, collection: FeatureCollection): void {
+  for (const feature of collection.features) {
+    const props = feature.properties as {
+      icon?: string;
+      emoji?: string;
+      color?: string;
+    } | null;
+    if (!props?.icon || !props.emoji || !props.color) continue;
+    if (map.hasImage(props.icon)) continue;
+    const image = makeChipImage(props.emoji, props.color);
+    if (image) map.addImage(props.icon, image, { pixelRatio: 2 });
+  }
 }
 
 function setSourceData(
@@ -188,6 +338,7 @@ export function MapPanel() {
   useEffect(() => {
     let cancelled = false;
     let map: MapLibreMap | null = null;
+    let resizeObserver: ResizeObserver | null = null;
 
     void (async () => {
       const container = containerRef.current;
@@ -201,6 +352,13 @@ export function MapPanel() {
       }
       if (cancelled) return;
       glRef.current = gl;
+
+      // Turbopack does not emit MapLibre's `new URL(...)` worker chunk from
+      // node_modules, so the default worker never loads and every GeoJSON
+      // source hangs forever (layers exist but nothing renders). The worker
+      // and its shared-chunk import are copied into public/maplibre by the
+      // `sync-maplibre-worker` script (predev/prebuild).
+      gl.setWorkerUrl("/maplibre/maplibre-gl-worker.mjs");
 
       map = new gl.Map({
         container,
@@ -221,23 +379,53 @@ export function MapPanel() {
         },
       });
       mapRef.current = map;
+
+      // Deterministic mounting: own the container→canvas size contract instead
+      // of trusting MapLibre's internal ResizeObserver, which under the Next
+      // dev runtime can miss layout changes — the canvas then CSS-stretches
+      // over a stale GL viewport and every layer drifts off its coordinates
+      // while DOM markers (positioned in real container pixels) stay put.
+      resizeObserver = new ResizeObserver(() => {
+        mapRef.current?.resize();
+      });
+      resizeObserver.observe(container);
+
       map.addControl(new gl.NavigationControl({ showCompass: false }), "top-right");
       map.getCanvas().setAttribute("aria-label", "Hazard and resource map");
 
       map.on("load", () => {
         if (cancelled || !map) return;
 
+        // Re-sync once at load: the container may have changed size between
+        // construction and style readiness (fonts, grid settling).
+        map.resize();
+
         map.addSource(SRC_HAZARDS, { type: "geojson", data: EMPTY });
         map.addSource(SRC_CLOSURES, { type: "geojson", data: EMPTY });
         map.addSource(SRC_EVENT_POINTS, { type: "geojson", data: EMPTY });
+        map.addSource(SRC_EVENT_CHIPS, { type: "geojson", data: EMPTY });
         map.addSource(SRC_RESOURCES, { type: "geojson", data: EMPTY });
         map.addSource(SRC_ROUTE, { type: "geojson", data: EMPTY });
 
+        // Hazard zones: translucent fill + a wide blurred "ember" glow that the
+        // animation loop breathes, + a crisp outline.
         map.addLayer({
           id: LYR_HAZARD_FILL,
           type: "fill",
           source: SRC_HAZARDS,
-          paint: { "fill-color": ["get", "color"], "fill-opacity": 0.25 },
+          paint: { "fill-color": ["get", "color"], "fill-opacity": 0.22 },
+        });
+        map.addLayer({
+          id: LYR_HAZARD_GLOW,
+          type: "line",
+          source: SRC_HAZARDS,
+          layout: { "line-cap": "round", "line-join": "round" },
+          paint: {
+            "line-color": ["get", "color"],
+            "line-width": ["interpolate", ["linear"], ["zoom"], 9, 3, 12, 7, 14, 11],
+            "line-blur": ["interpolate", ["linear"], ["zoom"], 9, 2, 14, 7],
+            "line-opacity": 0.45,
+          },
         });
         map.addLayer({
           id: LYR_HAZARD_OUTLINE,
@@ -245,19 +433,44 @@ export function MapPanel() {
           source: SRC_HAZARDS,
           paint: {
             "line-color": ["get", "color"],
-            "line-width": 1.5,
-            "line-opacity": 0.85,
+            "line-width": 2,
+            "line-opacity": 0.9,
+          },
+        });
+        // Closures: dark casing under an animated red dashed line.
+        map.addLayer({
+          id: LYR_CLOSURE_CASING,
+          type: "line",
+          source: SRC_CLOSURES,
+          layout: { "line-cap": "round" },
+          paint: {
+            "line-color": "#7f1d1d",
+            "line-width": ["interpolate", ["linear"], ["zoom"], 10, 4, 14, 8],
+            "line-blur": 2,
+            "line-opacity": 0.55,
           },
         });
         map.addLayer({
           id: LYR_CLOSURE_LINE,
           type: "line",
           source: SRC_CLOSURES,
-          layout: { "line-cap": "round" },
           paint: {
             "line-color": "#ef4444",
-            "line-width": 4,
+            "line-width": ["interpolate", ["linear"], ["zoom"], 10, 2, 14, 4],
             "line-dasharray": [2, 1.5],
+          },
+        });
+        // Route: teal glow casing + solid core + a bright flowing dash overlay.
+        map.addLayer({
+          id: LYR_ROUTE_GLOW,
+          type: "line",
+          source: SRC_ROUTE,
+          layout: { "line-cap": "round", "line-join": "round" },
+          paint: {
+            "line-color": "#14b8a6",
+            "line-width": 14,
+            "line-blur": 9,
+            "line-opacity": 0.4,
           },
         });
         map.addLayer({
@@ -265,28 +478,78 @@ export function MapPanel() {
           type: "line",
           source: SRC_ROUTE,
           layout: { "line-cap": "round", "line-join": "round" },
-          paint: { "line-color": "#14b8a6", "line-width": 4, "line-opacity": 0.95 },
+          paint: { "line-color": "#14b8a6", "line-width": 5, "line-opacity": 0.95 },
+        });
+        map.addLayer({
+          id: LYR_ROUTE_DASH,
+          type: "line",
+          source: SRC_ROUTE,
+          layout: { "line-cap": "round", "line-join": "round" },
+          paint: {
+            "line-color": "#ccfbf1",
+            "line-width": 2.5,
+            "line-dasharray": DASH_SEQUENCE[0],
+          },
         });
         map.addLayer({
           id: LYR_EVENT_POINT,
           type: "circle",
           source: SRC_EVENT_POINTS,
           paint: {
-            "circle-radius": 7,
+            "circle-radius": ["interpolate", ["linear"], ["zoom"], 9, 3.5, 12, 5, 14, 7],
             "circle-color": ["get", "color"],
             "circle-stroke-color": "#0a0a0c",
             "circle-stroke-width": 2,
           },
         });
+        // Resource dots: a small status-coloured point at every zoom, growing
+        // into the soft halo that sits under the DOM chips at street zooms.
         map.addLayer({
           id: LYR_RESOURCE_POINT,
           type: "circle",
           source: SRC_RESOURCES,
           paint: {
-            "circle-radius": 8,
+            "circle-radius": ["interpolate", ["linear"], ["zoom"], 9, 4, 12, 8, 14, 15],
             "circle-color": ["get", "color"],
-            "circle-stroke-color": "#0a0a0c",
-            "circle-stroke-width": 2.5,
+            "circle-opacity": [
+              "interpolate",
+              ["linear"],
+              ["zoom"],
+              11.5,
+              0.85,
+              12.5,
+              0.18,
+            ],
+            "circle-stroke-color": ["get", "color"],
+            "circle-stroke-opacity": 0.5,
+            "circle-stroke-width": 1,
+          },
+        });
+
+        // Icon chips as GL symbols (MapLibre's custom-marker pattern): they
+        // render in the same GL pass as everything else, so they are pinned
+        // to their coordinates by construction. `minzoom` gates them to
+        // street zooms natively.
+        map.addLayer({
+          id: LYR_RESOURCE_CHIP,
+          type: "symbol",
+          source: SRC_RESOURCES,
+          minzoom: CHIP_MIN_ZOOM,
+          layout: {
+            "icon-image": ["get", "icon"],
+            "icon-size": ["interpolate", ["linear"], ["zoom"], CHIP_MIN_ZOOM, 0.8, 14.5, 1],
+            "icon-allow-overlap": true,
+          },
+        });
+        map.addLayer({
+          id: LYR_EVENT_CHIP,
+          type: "symbol",
+          source: SRC_EVENT_CHIPS,
+          minzoom: CHIP_MIN_ZOOM,
+          layout: {
+            "icon-image": ["get", "icon"],
+            "icon-size": ["interpolate", ["linear"], ["zoom"], CHIP_MIN_ZOOM, 0.8, 14.5, 1],
+            "icon-allow-overlap": true,
           },
         });
 
@@ -294,6 +557,7 @@ export function MapPanel() {
           LYR_HAZARD_FILL,
           LYR_CLOSURE_LINE,
           LYR_EVENT_POINT,
+          LYR_EVENT_CHIP,
         ];
         for (const layerId of clickableEventLayers) {
           map.on("click", layerId, (e: MapLayerMouseEvent) => {
@@ -308,16 +572,18 @@ export function MapPanel() {
           });
         }
 
-        map.on("click", LYR_RESOURCE_POINT, (e: MapLayerMouseEvent) => {
-          const id = e.features?.[0]?.properties?.["resource_id"];
-          if (typeof id === "string") setSelection({ kind: "resource", id });
-        });
-        map.on("mouseenter", LYR_RESOURCE_POINT, () => {
-          if (map) map.getCanvas().style.cursor = "pointer";
-        });
-        map.on("mouseleave", LYR_RESOURCE_POINT, () => {
-          if (map) map.getCanvas().style.cursor = "";
-        });
+        for (const layerId of [LYR_RESOURCE_POINT, LYR_RESOURCE_CHIP]) {
+          map.on("click", layerId, (e: MapLayerMouseEvent) => {
+            const id = e.features?.[0]?.properties?.["resource_id"];
+            if (typeof id === "string") setSelection({ kind: "resource", id });
+          });
+          map.on("mouseenter", layerId, () => {
+            if (map) map.getCanvas().style.cursor = "pointer";
+          });
+          map.on("mouseleave", layerId, () => {
+            if (map) map.getCanvas().style.cursor = "";
+          });
+        }
 
         setMapReady(true);
       });
@@ -330,6 +596,8 @@ export function MapPanel() {
 
     return () => {
       cancelled = true;
+      resizeObserver?.disconnect();
+      resizeObserver = null;
       userMarkerRef.current?.remove();
       userMarkerRef.current = null;
       mapRef.current?.remove();
@@ -344,15 +612,57 @@ export function MapPanel() {
 
   useEffect(() => {
     if (!mapReady) return;
-    setSourceData(mapRef.current, SRC_HAZARDS, eventLayers.hazards);
-    setSourceData(mapRef.current, SRC_CLOSURES, eventLayers.closures);
-    setSourceData(mapRef.current, SRC_EVENT_POINTS, eventLayers.points);
+    const map = mapRef.current;
+    if (map) ensureChipImages(map, eventLayers.chips);
+    setSourceData(map, SRC_HAZARDS, eventLayers.hazards);
+    setSourceData(map, SRC_CLOSURES, eventLayers.closures);
+    setSourceData(map, SRC_EVENT_POINTS, eventLayers.points);
+    setSourceData(map, SRC_EVENT_CHIPS, eventLayers.chips);
   }, [mapReady, eventLayers]);
 
   useEffect(() => {
     if (!mapReady) return;
-    setSourceData(mapRef.current, SRC_RESOURCES, resourceLayer);
+    const map = mapRef.current;
+    if (map) ensureChipImages(map, resourceLayer);
+    setSourceData(map, SRC_RESOURCES, resourceLayer);
   }, [mapReady, resourceLayer]);
+
+  // --- ambient animation: breathing hazard glow, flowing route, ant closures
+  useEffect(() => {
+    const map = mapRef.current;
+    if (!mapReady || !map) return;
+    if (window.matchMedia("(prefers-reduced-motion: reduce)").matches) return;
+
+    let frame = 0;
+    let routeStep = -1;
+    let closureStep = -1;
+    const loop = (ts: number) => {
+      if (map.isStyleLoaded()) {
+        const breathe = (Math.sin(ts / 550) + 1) / 2; // 0..1
+        if (map.getLayer(LYR_HAZARD_GLOW)) {
+          map.setPaintProperty(LYR_HAZARD_GLOW, "line-opacity", 0.25 + breathe * 0.45);
+          map.setPaintProperty(LYR_HAZARD_FILL, "fill-opacity", 0.16 + breathe * 0.12);
+        }
+        const nextRoute = Math.floor(ts / 70) % DASH_SEQUENCE.length;
+        if (nextRoute !== routeStep && map.getLayer(LYR_ROUTE_DASH)) {
+          routeStep = nextRoute;
+          map.setPaintProperty(LYR_ROUTE_DASH, "line-dasharray", DASH_SEQUENCE[nextRoute]);
+        }
+        const nextClosure = Math.floor(ts / 160) % DASH_SEQUENCE.length;
+        if (nextClosure !== closureStep && map.getLayer(LYR_CLOSURE_LINE)) {
+          closureStep = nextClosure;
+          map.setPaintProperty(LYR_CLOSURE_LINE, "line-dasharray", DASH_SEQUENCE[nextClosure]);
+        }
+      }
+      frame = requestAnimationFrame(loop);
+    };
+    frame = requestAnimationFrame(loop);
+    return () => cancelAnimationFrame(frame);
+  }, [mapReady]);
+
+  const hazardsVisible = filter === "all" || filter === "hazards";
+  const resourcesVisible = filter !== "hazards";
+  const resourceTypeFilter = FILTER_RESOURCE_TYPE[filter];
 
   // --- recommended route ----------------------------------------------------
   const recommendedCandidate = useMemo(() => {
@@ -430,29 +740,31 @@ export function MapPanel() {
     const map = mapRef.current;
     if (!mapReady || !map) return;
 
-    const hazardsVisible = filter === "all" || filter === "hazards";
-    const resourcesVisible = filter !== "hazards";
-
     for (const layerId of [
       LYR_HAZARD_FILL,
+      LYR_HAZARD_GLOW,
       LYR_HAZARD_OUTLINE,
+      LYR_CLOSURE_CASING,
       LYR_CLOSURE_LINE,
       LYR_EVENT_POINT,
+      LYR_EVENT_CHIP,
     ]) {
       map.setLayoutProperty(layerId, "visibility", hazardsVisible ? "visible" : "none");
     }
-    map.setLayoutProperty(
-      LYR_RESOURCE_POINT,
-      "visibility",
-      resourcesVisible ? "visible" : "none",
-    );
-
-    const resourceType = FILTER_RESOURCE_TYPE[filter];
-    map.setFilter(
-      LYR_RESOURCE_POINT,
-      resourceType ? ["==", ["get", "resource_type"], resourceType] : null,
-    );
-  }, [mapReady, filter]);
+    for (const layerId of [LYR_RESOURCE_POINT, LYR_RESOURCE_CHIP]) {
+      map.setLayoutProperty(
+        layerId,
+        "visibility",
+        resourcesVisible ? "visible" : "none",
+      );
+      map.setFilter(
+        layerId,
+        resourceTypeFilter
+          ? ["==", ["get", "resource_type"], resourceTypeFilter]
+          : null,
+      );
+    }
+  }, [mapReady, hazardsVisible, resourcesVisible, resourceTypeFilter]);
 
   // --- detail card ----------------------------------------------------------
   const detailEventQuery = useQuery({
@@ -489,7 +801,11 @@ export function MapPanel() {
       aria-label="Hazard map"
       className="relative flex min-h-[420px] flex-col overflow-hidden rounded-2xl border border-hl-line bg-hl-panel lg:min-h-0"
     >
-      <div ref={containerRef} className="absolute inset-0" />
+      {/* Inline position: MapLibre's injected stylesheet sets
+          `.maplibregl-map { position: relative }` after Tailwind's utilities,
+          which silently beats `absolute` in the cascade and collapses the
+          container to the height of the injected controls. */}
+      <div ref={containerRef} className="absolute inset-0" style={{ position: "absolute" }} />
 
       {mapError ? (
         <div className="absolute inset-0 grid place-items-center p-6 text-center text-sm text-hl-muted">

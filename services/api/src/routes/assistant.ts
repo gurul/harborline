@@ -22,6 +22,7 @@ import {
   composeResponse,
   HAZARD_EVENT_TYPES,
   llmCompose,
+  llmComposeOpenAi,
   planQuery,
   tools,
   validateResponse,
@@ -175,16 +176,24 @@ assistantRoutes.post("/ask", async (c) => {
   const evidence = buildEvidence(ctx, intent, at);
 
   let response: AssistantResponse | null = null;
-  const apiKey = process.env.ANTHROPIC_API_KEY;
+  // Anthropic and OpenAI are interchangeable wording layers behind the same
+  // prompt, validator and deterministic fallback. Anthropic keeps precedence
+  // for existing deploys; OPENAI_API_KEY alone routes through the Responses API.
+  const anthropicKey = process.env.ANTHROPIC_API_KEY;
+  const openAiKey = process.env.OPENAI_API_KEY;
+  const apiKey = anthropicKey ?? openAiKey;
   if (apiKey && activeLlmCalls < MAX_CONCURRENT_LLM) {
     activeLlmCalls += 1;
     try {
       // Only the prompt sees the capped bundle. Sources, freshness and evidence
       // IDs below are still derived from the full one, so capping can never
       // drop provenance from what the user is shown.
-      response = await llmCompose(parsed.data.question, capEvidenceForPrompt(evidence), {
+      const compose = anthropicKey ? llmCompose : llmComposeOpenAi;
+      response = await compose(parsed.data.question, capEvidenceForPrompt(evidence), {
         apiKey,
-        model: process.env.ANTHROPIC_MODEL,
+        model: anthropicKey
+          ? process.env.ANTHROPIC_MODEL
+          : process.env.OPENAI_MODEL,
         signal: AbortSignal.timeout(LLM_TIMEOUT_MS),
       });
     } catch (err) {

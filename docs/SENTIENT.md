@@ -85,11 +85,28 @@ built for showing intermediate work while a response is generated.
 
 Harborline's assistant already produces exactly the intermediate artifacts worth
 streaming: *evidence gathered* (events + resources with ages), *candidates rejected*
-(stale shelter, closed route — with reasons), then the *validated answer*. A thin
-Python adapter can subclass `AbstractAgent`, call Harborline's REST API
-(`POST /v1/assistant/ask` plus the tool endpoints), and emit each stage as a chat
-event — making Harborline a specialized disaster-intelligence agent inside Sentient
-Chat / the GRID without moving any decision logic out of this codebase.
+(stale shelter, closed route — with reasons), then the *validated answer*.
+
+**Status: implemented.** `services/sentient-agent/agent.py` subclasses
+`AbstractAgent` (`sentient-agent-framework` 0.3.0 from PyPI), forwards the
+question to `POST /v1/assistant/ask`, and emits the pipeline's output as chat
+events over the framework's SSE `POST /assist` endpoint: `EVIDENCE`
+(`emit_json` — sources with provider, tier, `last_verified_at`), a chunked
+`ANSWER` text stream, `ACTION` (`emit_text_block`), and `CAVEATS` (freshness +
+uncertainty notes), then `complete()`. No decision logic moved out of
+TypeScript — the adapter is pure presentation over already-validated output.
+
+```bash
+cd services/sentient-agent
+python3.12 -m venv .venv && .venv/bin/pip install -r requirements.txt
+PORT=8100 .venv/bin/python agent.py   # needs the API running on :8787
+```
+
+The framework requires Python ≥ 3.10 (it uses PEP 604 union syntax at import
+time). Configuration: `HARBORLINE_API_URL`, `HARBORLINE_LAT`/`HARBORLINE_LON`
+(defaults to the region centre), `PORT` (default 8100). Connecting the running
+agent into Sentient Chat proper is a separate GRID onboarding step; locally it
+is fully exercisable with one `curl -N` SSE call.
 
 ## What Sentient does not provide
 

@@ -234,6 +234,7 @@ const REJECTION_PHRASE: Record<string, string> = {
   stale_status: "status not re-confirmed recently",
   full: "reported at capacity",
   closed: "not confirmed open",
+  inside_hazard_zone: "inside an active hazard area",
 };
 
 function capacityLine(resource: NearbyResource): string | null {

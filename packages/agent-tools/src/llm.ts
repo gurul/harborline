@@ -22,6 +22,11 @@ const ANTHROPIC_VERSION = "2023-06-01";
 const DEFAULT_MODEL = "claude-sonnet-5";
 const MAX_TOKENS = 1000;
 
+const OPENAI_RESPONSES_URL = "https://api.openai.com/v1/responses";
+// Grounded 2026-08-23 via developers.openai.com/api/docs/models: gpt-5.6-luna
+// is the current small tier recommended for cost-sensitive workloads.
+const DEFAULT_OPENAI_MODEL = "gpt-5.6-luna";
+
 /** Prompt caps — an unbounded bundle is an unbounded bill and a diluted prompt. */
 export const MAX_PROMPT_EVENTS = 25;
 export const MAX_PROMPT_RESOURCES = 25;
@@ -144,6 +149,114 @@ function extractJsonObject(text: string): { answer_markdown: string; recommended
  * to fall back to `composeResponse`, which is constructed to always pass the
  * validator.
  */
+interface OpenAiOutputPart {
+  type: string;
+  text?: string;
+}
+
+interface OpenAiOutputItem {
+  type: string;
+  content?: OpenAiOutputPart[];
+}
+
+interface OpenAiResponsesBody {
+  output?: OpenAiOutputItem[];
+}
+
+/**
+ * Compose an answer with the OpenAI Responses API. Same contract as
+ * `llmCompose`: the model only produces `answer_markdown` and
+ * `recommended_action`; provenance stays deterministic, and the result still
+ * passes through `validateResponse` at the call site. Throws on any failure so
+ * the caller falls back to the deterministic composer.
+ */
+export async function llmComposeOpenAi(
+  question: string,
+  evidence: EvidenceBundle,
+  opts: LlmComposeOptions,
+): Promise<AssistantResponse> {
+  if (!opts.apiKey) throw new Error("llmComposeOpenAi: apiKey is required");
+  const doFetch = opts.fetchImpl ?? globalThis.fetch;
+  if (typeof doFetch !== "function") {
+    throw new Error("llmComposeOpenAi: no fetch implementation available");
+  }
+
+  const now = new Date();
+  const userContent =
+    `${USER_QUESTION_OPEN_TAG}\n` +
+    `${question}\n` +
+    `${USER_QUESTION_CLOSE_TAG}\n\n` +
+    "Evidence JSON:\n" +
+    JSON.stringify(capEvidenceForPrompt(evidence));
+
+  const response = await doFetch(OPENAI_RESPONSES_URL, {
+    method: "POST",
+    headers: {
+      "content-type": "application/json",
+      authorization: `Bearer ${opts.apiKey}`,
+    },
+    body: JSON.stringify({
+      model: opts.model ?? DEFAULT_OPENAI_MODEL,
+      max_output_tokens: MAX_TOKENS,
+      input: [
+        { role: "system", content: LLM_SYSTEM_PROMPT },
+        { role: "user", content: userContent },
+      ],
+      text: {
+        format: {
+          type: "json_schema",
+          name: "harborline_answer",
+          strict: true,
+          schema: {
+            type: "object",
+            properties: {
+              answer_markdown: { type: "string" },
+              recommended_action: { type: ["string", "null"] },
+            },
+            required: ["answer_markdown", "recommended_action"],
+            additionalProperties: false,
+          },
+        },
+      },
+    }),
+    signal: opts.signal,
+  });
+
+  if (!response.ok) {
+    const body = await response.text().catch(() => "");
+    throw new Error(`llmComposeOpenAi: OpenAI API ${response.status} ${body.slice(0, 300)}`);
+  }
+
+  const payload = (await response.json()) as OpenAiResponsesBody;
+  // Reasoning-capable models may prepend non-message items; find the message.
+  const text = (payload.output ?? [])
+    .filter((item) => item.type === "message")
+    .flatMap((item) => item.content ?? [])
+    .filter((part) => part.type === "output_text" && typeof part.text === "string")
+    .map((part) => part.text as string)
+    .join("\n")
+    .trim();
+
+  if (text === "") throw new Error("llmComposeOpenAi: OpenAI API returned no text output");
+
+  const parsed = extractJsonObject(text);
+
+  return {
+    answer_markdown: parsed.answer_markdown,
+    recommended_action: parsed.recommended_action,
+    sources: buildSources(evidence),
+    freshness_note: buildFreshnessNote(evidence, now),
+    uncertainty_note: buildUncertaintyNote(evidence, now),
+    evidence_event_ids: [
+      ...new Set([
+        ...evidence.events.map((e) => e.event_id),
+        ...(evidence.route?.recommendation?.evidence_event_ids ?? []),
+      ]),
+    ],
+    composed_by: "llm",
+  };
+}
+
 export async function llmCompose(
   question: string,
   evidence: EvidenceBundle,

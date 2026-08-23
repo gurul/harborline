@@ -7,6 +7,8 @@ import {
   type Connector,
   type ConnectorResult,
   type EventType,
+  type MultiPolygon,
+  type Polygon,
   type Severity,
   type SourceRecord,
   type Urgency,
@@ -45,6 +47,7 @@ const NwsPropertiesSchema = z.looseObject({
   expires: z.string().nullish(),
   sent: z.string().nullish(),
   areaDesc: z.string().nullish(),
+  affectedZones: z.array(z.string()).nullish(),
 });
 
 const NwsFeatureSchema = z.looseObject({
@@ -88,6 +91,57 @@ export function mapEventType(capEvent: string | null | undefined): EventType {
   return (capEvent ?? "").toLowerCase().includes("flood") ? "flood" : "weather_warning";
 }
 
+/**
+ * Zone-geometry resolution for zone-only alerts.
+ *
+ * Most CAP alerts (heat, wind, advisories) ship `geometry: null` plus
+ * `affectedZones` — a list of api.weather.gov zone URLs whose responses carry
+ * the official zone polygons. Joining an alert to NWS's own zone geometry is
+ * not fabrication; it is the authoritative shape of the area the alert names.
+ * Zones are effectively static, so successful lookups are cached for the
+ * process lifetime; lookups are budgeted per poll so a cold start warms the
+ * cache over a few 60s cycles instead of bursting dozens of requests.
+ */
+const MAX_ZONES_PER_ALERT = 6;
+const MAX_ZONE_FETCHES_PER_POLL = 20;
+/** url → zone polygon, or null when the zone has no usable geometry. */
+const zoneGeometryCache = new Map<string, Polygon | MultiPolygon | null>();
+
+const NwsZoneSchema = z.looseObject({ geometry: z.unknown().nullish() });
+
+async function resolveZoneGeometry(
+  url: string,
+): Promise<Polygon | MultiPolygon | null | undefined> {
+  if (zoneGeometryCache.has(url)) return zoneGeometryCache.get(url);
+  let payload: unknown;
+  try {
+    payload = await fetchJson(url, {
+      headers: { "User-Agent": USER_AGENT, Accept: "application/geo+json" },
+      timeoutMs: 10_000,
+    });
+  } catch {
+    // Transient failure: leave the cache untouched so the next poll retries.
+    return undefined;
+  }
+  const zone = NwsZoneSchema.safeParse(payload);
+  const geometry = zone.success ? GeometrySchema.safeParse(zone.data.geometry) : null;
+  const usable =
+    geometry?.success &&
+    (geometry.data.type === "Polygon" || geometry.data.type === "MultiPolygon")
+      ? geometry.data
+      : null;
+  zoneGeometryCache.set(url, usable);
+  return usable;
+}
+
+/** Merge zone polygons into one MultiPolygon covering the whole alert area. */
+function combineZonePolygons(zones: (Polygon | MultiPolygon)[]): MultiPolygon | null {
+  const polygons = zones.flatMap((z) =>
+    z.type === "Polygon" ? [z.coordinates] : z.coordinates,
+  );
+  return polygons.length > 0 ? { type: "MultiPolygon", coordinates: polygons } : null;
+}
+
 export const nwsConnector: Connector = {
   id: "nws",
   label: `National Weather Service active alerts (${REGION.nwsArea})`,
@@ -116,15 +170,31 @@ export const nwsConnector: Connector = {
 
       const events: CanonicalEvent[] = [];
       const source_records: SourceRecord[] = [];
+      let zoneFetchBudget = MAX_ZONE_FETCHES_PER_POLL;
 
       for (const feature of parsed.data.features) {
         const props = feature.properties;
 
-        // Affected-zone fallback: NWS emits null geometry for zone-only alerts.
-        // We do not have the zone shapefiles locally, and fabricating a
-        // geometry would violate the no-inference rule — so we skip them.
-        const geometry = GeometrySchema.safeParse(feature.geometry);
-        if (!geometry.success) continue;
+        // NWS emits null geometry for zone-only alerts (the norm for heat and
+        // advisory products). Resolve the official zone polygons from
+        // `affectedZones` instead of skipping; an alert whose zones cannot be
+        // resolved (yet) is skipped this poll and retried on the next.
+        const inlineGeometry = GeometrySchema.safeParse(feature.geometry);
+        let geometry = inlineGeometry.success ? inlineGeometry.data : null;
+        let zoneDerived = false;
+        if (!geometry) {
+          const zoneUrls = (props.affectedZones ?? []).slice(0, MAX_ZONES_PER_ALERT);
+          const zones: (Polygon | MultiPolygon)[] = [];
+          for (const url of zoneUrls) {
+            if (!zoneGeometryCache.has(url) && zoneFetchBudget <= 0) continue;
+            if (!zoneGeometryCache.has(url)) zoneFetchBudget -= 1;
+            const zone = await resolveZoneGeometry(url);
+            if (zone) zones.push(zone);
+          }
+          geometry = combineZonePolygons(zones);
+          zoneDerived = geometry !== null;
+        }
+        if (!geometry) continue;
 
         const providerRecordId = props.id ?? feature.id ?? null;
         const eventId = `nws:${providerRecordId ?? stableHashFallback(feature)}`;
@@ -156,13 +226,19 @@ export const nwsConnector: Connector = {
               urgency: mapUrgency(props.urgency),
               certainty: mapCertainty(props.certainty),
               status: "active",
-              geometry: geometry.data,
+              geometry,
               starts_at: toIso(props.onset) ?? toIso(props.effective) ?? sent,
               ends_at: toIso(props.ends) ?? toIso(props.expires),
               last_verified_at: sent,
               best_tier: "A",
               source_count: 1,
-              geographic_precision: geometry.data.type === "Point" ? 0.8 : 1,
+              // Zone-derived shapes cover the whole named zone, coarser than
+              // an alert-specific polygon drawn by the issuing office.
+              geographic_precision: zoneDerived
+                ? 0.6
+                : geometry.type === "Point"
+                  ? 0.8
+                  : 1,
             },
             now,
           ),

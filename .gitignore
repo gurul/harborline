@@ -8,3 +8,10 @@ out/
 .DS_Store
 coverage/
 .era/runtime/
+
+# Python (sentient-agent adapter)
+.venv/
+__pycache__/
+
+# MapLibre worker files synced from node_modules by sync-maplibre-worker
+apps/web/public/maplibre/

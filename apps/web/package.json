@@ -4,6 +4,9 @@
   "private": true,
   "type": "module",
   "scripts": {
+    "sync-maplibre-worker": "mkdir -p public/maplibre && cp ../../node_modules/maplibre-gl/dist/maplibre-gl-worker.mjs ../../node_modules/maplibre-gl/dist/maplibre-gl-shared.mjs public/maplibre/",
+    "predev": "npm run sync-maplibre-worker",
+    "prebuild": "npm run sync-maplibre-worker",
     "dev": "next dev -p 3000",
     "build": "next build",
     "start": "next start -p 3000",

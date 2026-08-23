@@ -30,7 +30,7 @@ Built for the **Sentient Labs Hackathon (50 Selected Builders)**, where it won *
 
 ## Why it is different
 
-Most disaster chatbots put the model in front: they search, summarize, and hope the summary is right. Harborline puts a verified geospatial event layer in front and treats the model as a constrained interface to it, so a bad model call produces awkward wording instead of a fabricated shelter. The whole demo runs deterministically offline (`DEMO_MODE=1` seeds a California wildfire scenario over Chico), and 68 automated eval tests enforce the acceptance scenario and the hardening invariants: the stale shelter is rejected, the closed road is eliminated, and the lowest-risk route is recommended with sources and timestamps.
+Most disaster chatbots put the model in front: they search, summarize, and hope the summary is right. Harborline puts a verified geospatial event layer in front and treats the model as a constrained interface to it, so a bad model call produces awkward wording instead of a fabricated shelter. The whole demo runs deterministically offline (`DEMO_MODE=1` seeds a California wildfire scenario over Chico), and 81 automated eval tests enforce the acceptance scenario and the hardening invariants: the stale shelter is rejected, the closed road is eliminated, and the lowest-risk route is recommended with sources and timestamps.
 
 ## Research grounding
 
@@ -38,7 +38,7 @@ The design and its hardening pass are grounded in a citation-verified corpus of 
 
 ## Sentient technology
 
-Harborline was designed around Sentient's open-source GRID ecosystem. The MVP ships a deterministic tool pipeline for latency-sensitive questions, and `packages/agent-tools` defines an adapter slot where ROMA (recursive meta-agent investigations of conflicting reports) and OpenDeepSearch (open-web retrieval beyond the structured feeds) plug in behind the same tool contract. Agent orchestration sits above the evidence layer; it does not replace it. [docs/SENTIENT.md](./docs/SENTIENT.md) covers the full integration design: ROMA's atomizer, planner, and executor loop as the investigation tier, OpenDeepSearch as the `search_verified_news` backend, and serving Harborline as a Sentient Chat agent through the Sentient Agent Framework.
+Harborline was designed around Sentient's open-source GRID ecosystem, and one leg of that design is now implemented: **Harborline serves as a Sentient Chat agent** through the official Sentient Agent Framework. `services/sentient-agent` is a thin Python adapter (`sentient-agent-framework` 0.3.0) that exposes the framework's SSE `POST /assist` protocol and re-emits Harborline's already-validated answers as Sentient Chat events — `EVIDENCE` (sources with tiers and ages), a streamed `ANSWER`, `ACTION`, and `CAVEATS`. No decision logic lives in the adapter; it is pure presentation over the evidence-gated pipeline. `packages/agent-tools` still defines the adapter slot where ROMA (recursive meta-agent investigations of conflicting reports) and OpenDeepSearch (open-web retrieval beyond the structured feeds) plug in behind the same tool contract — agent orchestration sits above the evidence layer; it does not replace it. [docs/SENTIENT.md](./docs/SENTIENT.md) covers the full design and current status of each integration.
 
 ## Architecture
 
@@ -89,6 +89,8 @@ Open **<http://localhost:3000>**. The seeded scenario gives you an active wildfi
 | `DEMO_MODE` | `services/api` | `1` in dev | Seeds the deterministic California wildfire scenario at boot; live connectors keep running. `0` for live-only |
 | `ANTHROPIC_API_KEY` | `services/api` | unset | Optional. Enables the LLM composer for wording; output still passes the safety validator or is discarded |
 | `ANTHROPIC_MODEL` | `services/api` | `claude-sonnet-5` | Composer model override; only read when the key is set |
+| `OPENAI_API_KEY` | `services/api` | unset | Optional. Same wording-composer role via the OpenAI Responses API; used when `ANTHROPIC_API_KEY` is not set. Same validator gate and deterministic fallback |
+| `OPENAI_MODEL` | `services/api` | `gpt-5.6-luna` | OpenAI composer model override; only read when that key is in use |
 | `ALLOWED_ORIGINS` | `services/api` | unset | Comma-separated CORS allowlist. Unset: localhost-only in dev, deny cross-origin in production |
 | `TRUST_PROXY` | `services/api` | unset | Set `1` only behind a TLS-terminating proxy: rate limiting then keys on `X-Forwarded-For` instead of the socket address |
 | `NEXT_PUBLIC_API_URL` | `apps/web` | `http://localhost:8787` | REST + SSE base URL |
@@ -103,7 +105,7 @@ Geography is not scattered through the code: everything location-specific — ma
 | `npm run dev:web` | Run the web app on `:3000` |
 | `npm run build` | Build every workspace in dependency order |
 | `npm run check` | `tsc --noEmit` across all workspaces |
-| `npm test` | 68 Vitest evals: safety validator, dedup, freshness, hardening invariants, acceptance scenario |
+| `npm test` | 81 Vitest evals: safety validator, dedup, freshness, hardening invariants, acceptance scenario, Camp Fire real-to-sim benchmark |
 
 ## Project layout
 
@@ -113,6 +115,7 @@ Geography is not scattered through the code: everything location-specific — ma
 | `packages/agent-tools` | `EventStore`/`MemoryStore`, tool registry, query planner, composer, optional LLM wrapper, safety validator, route-risk engine |
 | `connectors` | NWS, USGS, FEMA shelters, and the seeded demo scenario |
 | `services/api` | Hono REST + SSE + ingestion scheduler |
+| `services/sentient-agent` | Python adapter serving Harborline as a Sentient Chat agent (Sentient Agent Framework, SSE `POST /assist`) |
 | `apps/web` | Next.js 16 UI: MapLibre dark map, live feed, assistant |
 | `evals` | Vitest suites for safety, dedup, freshness, and the end-to-end scenario |
 | `infrastructure` | Optional PostGIS + Redis compose stack for the upgrade path |
@@ -132,7 +135,7 @@ MIT. See [LICENSE](LICENSE).
 > Sentient Labs hackathon project. The hackathon version proved the concept and won
 > the award. The rebuild brings it up to current engineering and research practice:
 > an evidence-first architecture with provenance and freshness on every record, a
-> safety validator gating all model output, 68 automated evals including the full
+> safety validator gating all model output, 81 automated evals including the full
 > acceptance scenario, a research-driven security and correctness hardening pass
 > (rate limiting, bounded SSE, store lifecycle, prompt-injection defenses,
 > read-time confidence decay, the five-element warning rule — see

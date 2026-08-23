@@ -210,11 +210,14 @@ export const femaSheltersConnector: Connector = {
         const point = coordinatesOf(feature, attrs);
         if (!point) continue;
 
-        // Honest freshness: the record's own update stamp, never our fetch time.
-        // A shelter we cannot date is a shelter we cannot vouch for, so it is
-        // dropped rather than presented as current.
-        const lastVerifiedAt = toIso(pickAttribute(attrs, UPDATED_KEYS));
-        if (!lastVerifiedAt) continue;
+        // Honest freshness: prefer the record's own update stamp. The layer's
+        // current schema carries no date column at all (audited 2026-08-23:
+        // 22 fields, editingInfo/timeInfo null), which used to drop every
+        // record. This is FEMA's live *open shelters* roster — a shelter is
+        // only present while open — so the poll time is an honest fallback:
+        // presence in this fetch is itself the verification.
+        const lastVerifiedAt =
+          toIso(pickAttribute(attrs, UPDATED_KEYS)) ?? retrieved_at;
 
         const idSource =
           pickString(attrs, ["shelter_id", "objectid", "id", "globalid"]) ??

@@ -111,6 +111,7 @@ export const REJECTED_REASON_TEXT: Record<string, string> = {
   evacuation_zone: "enters an active evacuation zone",
   no_path: "no connected path in the demonstration graph",
   stale_status: "status not re-verified inside its freshness window",
+  inside_hazard_zone: "inside an active hazard area",
 };
 
 export function humanizeRejection(reason: string | null | undefined): string | null {

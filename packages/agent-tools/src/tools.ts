@@ -26,10 +26,16 @@ import {
   eventMaxAge,
   formatAge,
   isStale,
+  pointInGeometry,
   resourceMaxAge,
 } from "@harborline/event-schema";
 import type { EventStore } from "./store.js";
-import { buildRecommendation, calculateRoutes } from "./router.js";
+import {
+  HAZARD_BUFFER_M,
+  POINT_HAZARD_RADIUS_M,
+  buildRecommendation,
+  calculateRoutes,
+} from "./router.js";
 import { planQuery } from "./planner.js";
 import type { EvidenceBundle, RejectedResource } from "./composer.js";
 
@@ -142,7 +148,7 @@ export interface NearbyResourcesResult {
   recommendable: NearbyResource[];
   rejected: {
     resource: NearbyResource;
-    rejected_reason: "stale_status" | "full" | "closed";
+    rejected_reason: "stale_status" | "full" | "closed" | "inside_hazard_zone";
   }[];
 }
 
@@ -305,6 +311,32 @@ function get_event_details(
   };
 }
 
+/**
+ * Camp Fire lesson (Feather River Hospital, 2018-11-08): a facility inside an
+ * active hazard footprint is not a destination, whatever its own status record
+ * says — the hospital's roster still read "open" while its staff were carrying
+ * patients out through the fire. A resource sitting inside the geometry of a
+ * fresh, active, severe-or-extreme blocking hazard is therefore rejected
+ * outright, with the same severity-scaled point standoffs the router uses.
+ */
+function containingHazard(
+  resource: NearbyResource,
+  hazards: CanonicalEvent[],
+  now: Date,
+): CanonicalEvent | null {
+  const at = resource.location.coordinates as LonLat;
+  for (const event of hazards) {
+    if (event.severity !== "severe" && event.severity !== "extreme") continue;
+    if (isStale(event.last_verified_at, eventMaxAge(event.event_type), now)) continue;
+    const buffer =
+      event.geometry.type === "Point"
+        ? POINT_HAZARD_RADIUS_M[event.severity]
+        : HAZARD_BUFFER_M;
+    if (pointInGeometry(at, event.geometry, buffer)) return event;
+  }
+  return null;
+}
+
 function get_nearby_resources(
   ctx: ToolContext,
   input: {
@@ -323,13 +355,30 @@ function get_nearby_resources(
     radius_m: args.radius_m,
   });
 
+  const hazards = ctx.store.queryEvents({
+    center: [args.lon, args.lat],
+    radius_m: MAX_RESOURCE_RADIUS_M,
+    types: HAZARD_EVENT_TYPES,
+    statuses: ["active"],
+    now: ctx.now,
+  });
+
   const recommendable: NearbyResource[] = [];
   const rejected: NearbyResourcesResult["rejected"] = [];
 
   for (const resource of nearby) {
+    // Freshness and status first (the existing gate), then hazard containment
+    // as the final check on anything still recommendable: a fresh, open
+    // facility inside an active severe hazard footprint is Feather River
+    // Hospital — its own record says "open" and it must still be rejected.
     const reason = classifyResource(resource, ctx.now);
-    if (reason === null) recommendable.push(resource);
-    else rejected.push({ resource, rejected_reason: reason });
+    if (reason !== null) {
+      rejected.push({ resource, rejected_reason: reason });
+    } else if (containingHazard(resource, hazards, ctx.now)) {
+      rejected.push({ resource, rejected_reason: "inside_hazard_zone" });
+    } else {
+      recommendable.push(resource);
+    }
   }
 
   return { recommendable, rejected };

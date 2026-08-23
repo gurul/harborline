@@ -265,22 +265,28 @@ rate-limited.
 ## Enabling the optional LLM composer
 
 By default the assistant is fully deterministic: `composeResponse` renders a template over
-the tool evidence and `composed_by` reads `"deterministic"`. Setting an Anthropic key
-switches wording generation to `llmCompose` — **and nothing else**.
+the tool evidence and `composed_by` reads `"deterministic"`. Setting a provider key
+switches wording generation to the LLM composer — **and nothing else**. Two providers are
+supported behind the identical prompt, validator, and fallback; Anthropic takes precedence
+when both keys are set.
 
 ```bash
+# Anthropic (llmCompose, Messages API)
 export ANTHROPIC_API_KEY=sk-ant-...
-# optional; defaults to claude-sonnet-5
-export ANTHROPIC_MODEL=claude-sonnet-5
+export ANTHROPIC_MODEL=claude-sonnet-5     # optional; this is the default
+
+# — or — OpenAI (llmComposeOpenAi, Responses API)
+export OPENAI_API_KEY=sk-proj-...
+export OPENAI_MODEL=gpt-5.6-luna           # optional; this is the default
 
 npm run dev:api
 ```
 
 > [!CAUTION]
-> The key is read from the environment only. Never commit it, never put it in
-> `apps/web` (`NEXT_PUBLIC_*` variables are shipped to the browser), and never pass it
-> through the API surface. The web app never sees it — only the Hono service calls
-> Anthropic.
+> Keys are read from the environment only. Never commit them, never put them in
+> `apps/web` (`NEXT_PUBLIC_*` variables are shipped to the browser), and never pass them
+> through the API surface. The web app never sees them — only the Hono service calls
+> the model provider.
 
 What changes and what does not:
 
@@ -313,7 +319,7 @@ or the model's answer was rejected. Check the API logs — rejections are logged
 violation classes that fired. **Persistent rejection is a signal to investigate the prompt,
 not to relax the validator.**
 
-To turn it off, unset `ANTHROPIC_API_KEY` and restart. Prose quality drops; coverage,
+To turn it off, unset the provider key(s) and restart. Prose quality drops; coverage,
 correctness, and every fact stay the same.
 
 ---

@@ -401,6 +401,12 @@ Bidwell's `last_verified_at` is **26 hours** old against a 24-hour shelter polic
 returned here with its timestamp so the map can render it honestly, and it is rejected by
 the assistant's resource tool with `rejected_reason: "stale_status"`.
 
+The resource tool's full rejection vocabulary is `stale_status`, `full`, `closed`, and
+`inside_hazard_zone`. The last one is the Feather River rule from the Camp Fire benchmark
+([BENCHMARK.md](./BENCHMARK.md)): a fresh, open facility whose location falls inside the
+geometry of an active severe-or-extreme hazard is rejected outright — its own status
+record does not save it.
+
 ---
 
 ## `GET /v1/resources/:id`
