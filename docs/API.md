@@ -561,6 +561,10 @@ curl -s "http://localhost:8787/v1/routes?from_lat=39.7398&from_lon=-121.8432&to_
 }
 ```
 
+Destination eligibility is checked before route generation using the same policy as nearby-resource recommendations. A stale, closed, full, unknown-status, or hazard-contained destination returns `422` with `error: "destination_unavailable"`, a `rejected_reason` (`stale_status`, `closed`, `full`, or `inside_hazard_zone`), an empty `candidates` array, and the destination record. `unknown` status maps to `closed` (not confirmed open).
+
+For eligible destinations, hazard scoring includes departure and arrival approaches and their exact endpoints. A graph-coverage failure remains `no_viable_route`; it does not mean a closure was observed. Both success and failure payloads remain labelled `routing: "demonstration"`.
+
 Three things this response is contractually required to do:
 
 - **`routing` is always the literal `"demonstration"`.** `RouteRecommendation.routing` is
@@ -722,6 +726,7 @@ Every non-2xx response uses one flat shape — an `error` slug, a human-readable
 | `400` | `invalid_body` | Zod rejected a request body. |
 | `404` | `not_found` | Unknown or malformed `event_id`/`resource_id`, or an unknown route. |
 | `413` | `payload_too_large` | Request body exceeded the body limit. |
+| `422` | `destination_unavailable` | Destination fails resource freshness, status, or hazard-containment policy; `rejected_reason` explains why. |
 | `422` | `no_viable_route` | `/v1/routes` could not produce a recommendation — either the origin/destination could not snap to the bounded demo graph, or every candidate route was eliminated by an active closure. |
 | `429` | `rate_limited` | Token bucket exhausted (120/min general, 6/min assistant). `Retry-After` is set. |
 | `429`/`503` | `too_many_streams` | Per-client (429) or process-wide (503) SSE cap reached. |

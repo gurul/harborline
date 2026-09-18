@@ -36,7 +36,7 @@ import {
   buildRecommendation,
   calculateRoutes,
 } from "./router.js";
-import { planQuery } from "./planner.js";
+import { planQuery, rankResources } from "./planner.js";
 import type { EvidenceBundle, RejectedResource } from "./composer.js";
 
 export interface ToolContext {
@@ -63,6 +63,8 @@ export const HAZARD_EVENT_TYPES: EventType[] = [
 export const DEFAULT_RESOURCE_RADIUS_M = 8_000;
 /** Upper bound on a caller-supplied radius — a whole-planet query is not a query. */
 export const MAX_RESOURCE_RADIUS_M = 50_000;
+/** Window used by every assistant entry point for recent updates. */
+export const RECENT_WINDOW_MS = 60 * 60 * 1000;
 
 // ---------------------------------------------------------------------------
 // Input schemas
@@ -170,6 +172,7 @@ export interface CalculateRoutesResult {
   destination: Resource;
   routing: "demonstration";
   generated_at: string;
+  destination_rejected_reason?: NearbyResourcesResult["rejected"][number]["rejected_reason"];
 }
 
 export interface RouteRiskBreakdown {
@@ -253,7 +256,7 @@ function enrichEvent(
  * REST contract, and "not confirmed open" is the honest reading of it.
  */
 function classifyResource(
-  resource: NearbyResource,
+  resource: Resource,
   now: Date,
 ): "stale_status" | "full" | "closed" | null {
   if (isStale(resource.last_verified_at, resourceMaxAge(resource.resource_type), now)) {
@@ -320,12 +323,13 @@ function get_event_details(
  * outright, with the same severity-scaled point standoffs the router uses.
  */
 function containingHazard(
-  resource: NearbyResource,
+  resource: Resource,
   hazards: CanonicalEvent[],
   now: Date,
 ): CanonicalEvent | null {
   const at = resource.location.coordinates as LonLat;
   for (const event of hazards) {
+    if (!HAZARD_EVENT_TYPES.includes(event.event_type)) continue;
     if (event.severity !== "severe" && event.severity !== "extreme") continue;
     if (isStale(event.last_verified_at, eventMaxAge(event.event_type), now)) continue;
     const buffer =
@@ -416,6 +420,18 @@ function calculate_routes(
   }
 
   const events = ctx.store.queryEvents({ statuses: ["active"], now: ctx.now });
+  const rejection = classifyResource(destination, ctx.now) ??
+    (containingHazard(destination, events, ctx.now) ? "inside_hazard_zone" : null);
+  if (rejection) {
+    return {
+      candidates: [],
+      recommendation: null,
+      destination,
+      destination_rejected_reason: rejection,
+      routing: "demonstration",
+      generated_at: ctx.now.toISOString(),
+    };
+  }
   const from: LonLat = [args.from_lon, args.from_lat];
   const to = destination.location.coordinates as LonLat;
 
@@ -553,13 +569,13 @@ export function gatherEvidence(
   const typeFilter: EventType[] | undefined =
     intent === "roads_to_avoid" ? HAZARD_EVENT_TYPES : undefined;
 
-  const events = ctx.store.queryEvents({
-    center: at,
+  const events = tools.get_active_events(ctx, {
+    lat,
+    lon,
     radius_m: radius,
     types: typeFilter,
-    statuses: ["active"],
-    now: ctx.now,
-  });
+  }).events.filter((event) => intent !== "what_changed" ||
+    new Date(event.last_verified_at).getTime() >= ctx.now.getTime() - RECENT_WINDOW_MS);
 
   const sourceRecords: SourceRecord[] = [];
   for (const event of events) {
@@ -578,11 +594,11 @@ export function gatherEvidence(
       resource_type: resourceType,
       radius_m: radius,
     });
-    bundle.resources = recommendable;
+    bundle.resources = rankResources(question, recommendable);
     bundle.rejected_resources = rejected as RejectedResource[];
 
     if (intent === "nearest_shelter" && recommendable.length > 0) {
-      const destination = recommendable[0]!;
+      const destination = bundle.resources![0]!;
       const route = tools.calculate_routes(ctx, {
         from_lat: lat,
         from_lon: lon,

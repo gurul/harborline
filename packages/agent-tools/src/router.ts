@@ -193,9 +193,17 @@ export function sampleEdgePoints(
 }
 
 /** True when any interior sample of the edge falls within the event geometry. */
-export function edgeIntersectsEvent(geometry: LonLat[], event: CanonicalEvent): boolean {
+export function edgeIntersectsEvent(
+  geometry: LonLat[],
+  event: CanonicalEvent,
+  includeEndpoints = false,
+): boolean {
   const bufferM = hazardBufferMeters(event);
-  for (const pt of sampleEdgePoints(geometry)) {
+  const points = sampleEdgePoints(geometry, SAMPLE_STEP_M, includeEndpoints ? 0 : ENDPOINT_MARGIN_M);
+  if (includeEndpoints && geometry.length > 0) {
+    points.push(geometry[0]!, geometry.at(-1)!);
+  }
+  for (const pt of points) {
     if (pointInGeometry(pt, event.geometry, bufferM)) return true;
   }
   return false;
@@ -347,15 +355,31 @@ function scorePath(
    * crosses a closure would be reported hazard-free purely because the router
    * had no edges to inspect.
    */
-  const checked: { geometry: LonLat[]; length_m: number }[] =
+  const checked: { geometry: LonLat[]; length_m: number; includeEndpoints?: boolean }[] =
     path.length > 0
       ? path.map((entry) => ({ geometry: entry.geometry, length_m: entry.length_m }))
-      : [{ geometry: coordinates, length_m: distance }];
+      : [{ geometry: coordinates, length_m: distance, includeEndpoints: true }];
+
+  // The returned geometry includes the off-node approaches, so they must be
+  // assessed too. Graph-edge scoring alone leaves up to MAX_SNAP_M unchecked
+  // at either end of an otherwise viable route.
+  if (path.length > 0) {
+    const approaches: LonLat[][] = [
+      [input.from, path[0]!.geometry[0]!],
+      [path[path.length - 1]!.geometry.at(-1)!, input.to],
+    ];
+    for (const geometry of approaches) {
+      const length_m = polylineLength(geometry);
+      // Even a zero-length approach checks the user's actual endpoint. The
+      // junction margin on graph edges must not hide a hazard at that point.
+      checked.push({ geometry, length_m, includeEndpoints: true });
+    }
+  }
 
   for (const entry of checked) {
     let edgeHazardCounted = false;
     for (const event of events) {
-      if (!edgeIntersectsEvent(entry.geometry, event)) continue;
+      if (!edgeIntersectsEvent(entry.geometry, event, entry.includeEndpoints)) continue;
       intersecting.add(event.event_id);
 
       if (event.event_type === "road_closure") {

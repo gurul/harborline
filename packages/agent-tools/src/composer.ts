@@ -22,7 +22,7 @@ import {
   isStale,
   resourceMaxAge,
 } from "@harborline/event-schema";
-import { planQuery, type QueryIntent } from "./planner.js";
+import { planQuery, rankResources, type QueryIntent } from "./planner.js";
 import { HAZARD_EVENT_TYPES } from "./tools.js";
 
 /** Fraction of the freshness budget past which a record is "aging". */
@@ -269,7 +269,8 @@ function routeSection(evidence: EvidenceBundle): string[] {
   if (
     !route.recommendation &&
     route.candidates.length > 0 &&
-    route.candidates.every((c) => c.eliminated)
+    route.candidates.every((c) => c.eliminated &&
+      (c.rejected_reason === "closure_intersection" || c.rejected_reason === "evacuation_zone"))
   ) {
     lines.push(
       "No route is currently verified as passable. If leaving by road is not possible, " +
@@ -277,6 +278,8 @@ function routeSection(evidence: EvidenceBundle): string[] {
         "non-vegetated open area — a large parking lot, sports field, or wide paved area — " +
         "and re-check for an updated route.",
     );
+  } else if (!route.recommendation) {
+    lines.push("A route to this destination is not verified by the demonstration graph. Confirm directions with local authorities before travelling.");
   }
   if (route.candidates.length > 0) {
     lines.push("Routing is a bounded demonstration graph, not a live traffic service.");
@@ -514,18 +517,16 @@ function recommendedAction(
       const top = (evidence.resources ?? [])[0];
       if (!top) return "Contact local emergency services — no shelter has been verified nearby.";
       const rec = evidence.route?.recommendation;
-      return rec
-        ? `Head for ${top.name} using the lowest-risk route currently available (about ${Math.max(
-            1,
-            Math.round(rec.duration_min),
-          )} min). Re-check before you leave — this reflects reports as of ${formatAge(
-            top.last_verified_at,
-            now,
-          )}.`
-        : `Head for ${top.name} and confirm on arrival — this reflects reports as of ${formatAge(
-            top.last_verified_at,
-            now,
-          )}.`;
+      if (!rec) {
+        return "A route to this shelter is not verified. Contact local emergency services for directions and re-check for updates before travelling.";
+      }
+      return `Head for ${top.name} using the lowest-risk route currently available (about ${Math.max(
+        1,
+        Math.round(rec.duration_min),
+      )} min). Re-check before you leave — this reflects reports as of ${formatAge(
+        top.last_verified_at,
+        now,
+      )}.`;
     }
     case "roads_to_avoid":
       return "Plan around the listed closures and re-check before setting out; closure records change as crews report in.";
@@ -539,26 +540,24 @@ function recommendedAction(
   }
 }
 
-const ACCESSIBILITY_QUERY = /\b(wheelchair|accessib\w*|ada|disab\w*|mobility)\b/i;
-
 /**
  * Camp Fire lesson (benchmark criterion 10): the victims skewed elderly and
  * mobility-limited. When the question itself asks about accessibility, a
  * verified-accessible shelter outranks a marginally nearer one with no
  * recorded accessibility features. Records only — nothing is inferred.
  */
-function preferAccessible(
+function alignDestination(
   question: string,
   evidence: EvidenceBundle,
 ): EvidenceBundle {
-  if (!ACCESSIBILITY_QUERY.test(question)) return evidence;
-  const resources = [...(evidence.resources ?? [])].sort((a, b) => {
-    const aRank = a.accessibility_features.length > 0 ? 0 : 1;
-    const bRank = b.accessibility_features.length > 0 ? 0 : 1;
-    if (aRank !== bRank) return aRank - bRank;
-    return a.distance_m - b.distance_m;
-  });
-  return { ...evidence, resources };
+  const resources = rankResources(question, evidence.resources ?? []);
+  // Hand-built bundles may already carry a route to another resource. Never
+  // transfer that route's duration or guidance to the newly selected shelter.
+  const destinationId = evidence.route?.recommendation?.destination_resource_id ??
+    evidence.route?.destination?.resource_id;
+  const route = destinationId && destinationId !== resources[0]?.resource_id
+    ? undefined : evidence.route;
+  return { ...evidence, resources, route };
 }
 
 export function composeResponse(
@@ -567,7 +566,7 @@ export function composeResponse(
   now: Date,
 ): AssistantResponse {
   const { intent } = planQuery(question);
-  evidence = preferAccessible(question, evidence);
+  evidence = alignDestination(question, evidence);
   const byEvent = recordsByEvent(evidence);
 
   const lines = hasEvidence(evidence)

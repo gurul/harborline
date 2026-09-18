@@ -25,12 +25,14 @@ Built for the **Sentient Labs Hackathon (50 Selected Builders)**, where it won *
 3. **Score trust transparently.** Sources are tiered from A (issuing authority) down to E (unverified report). Internally, confidence is `authority × freshness × corroboration × precision × consistency`. Users only ever see one of four labels: `official / verified / developing / unverified`. There are no invented percentages.
 4. **Enforce freshness.** Every event and resource type has a maximum acceptable age. A shelter whose status is 26 hours old still appears, along with its age, but recommendations reject it with an explicit `stale_status` reason.
 5. **Route around verified hazards.** Candidate routes are intersected with hazard geometry. Routes that cross a closure or evacuation zone are eliminated, the survivors are risk-scored, and the answer is phrased as "the lowest-risk route currently available" rather than "safe".
-6. **Answer questions from evidence only.** The assistant plans which tools to run, gathers structured evidence, and composes an answer from deterministic templates, or from an optional LLM for wording. A safety validator rejects any response with uncited claims, stale-as-current language, guarantees, or missing sources, and rejected answers fall back to the deterministic composer.
+6. **Answer questions from evidence only.** The assistant plans which tools to run, gathers structured evidence, and composes an answer from deterministic templates, or from an optional LLM for wording. A safety validator checks for unsupported operational wording, stale-as-current language, guarantees, and missing sources; rejected answers fall back to the deterministic composer. These heuristic checks do not prove that every LLM claim matches the record (see [review findings](./docs/CRITICAL_REVIEW.md)).
 7. **Show contradictions honestly.** When a social post disputes an official closure, the closure stays closed and gains a `contradiction_note`. Harborline does not average sources into a false consensus.
 
 ## Why it is different
 
-Most disaster chatbots put the model in front: they search, summarize, and hope the summary is right. Harborline puts a verified geospatial event layer in front and treats the model as a constrained interface to it, so a bad model call produces awkward wording instead of a fabricated shelter. The whole demo runs deterministically offline (`DEMO_MODE=1` seeds a California wildfire scenario over Chico), and 89 automated eval tests enforce the acceptance scenario and the hardening invariants: the stale shelter is rejected, the closed road is eliminated, and the lowest-risk route is recommended with sources and timestamps.
+Most disaster chatbots put the model in front: they search, summarize, and hope the summary is right. Harborline puts a verified geospatial event layer in front and treats the model as a constrained interface to it, to constrain model output. Its heuristic validator catches specific failure patterns, but does not establish complete semantic grounding of optional LLM wording. The whole demo runs deterministically offline (`DEMO_MODE=1` seeds a California wildfire scenario over Chico), and 108 automated eval tests enforce the acceptance scenario and the hardening invariants: the stale shelter is rejected, the closed road is eliminated, and the lowest-risk route is recommended with sources and timestamps.
+
+The [critical code review](./docs/CRITICAL_REVIEW.md) added regressions for consistent shelter selection and routing, hazard checks on route approaches, unavailable destinations, and travel advice when no route is verified. `.era/runtime` is local runtime state and is not included in the repository.
 
 ## Research grounding
 
@@ -83,7 +85,7 @@ Open **<http://localhost:3000>**. The seeded scenario gives you an active wildfi
 1. Structured records determine facts; the language layer only restates them.
 2. Every displayed fact carries its provider, trust tier, and `last_verified_at` timestamp.
 3. Freshness is enforced. Stale records appear with their age, but they are not recommended or described as current.
-4. There is no fabrication path: missing data comes back as "unknown / not verified" instead of an inference.
+4. The deterministic composer uses structured records; missing data comes back as "unknown / not verified". Optional LLM wording still has a known semantic-validation gap described in [review findings](./docs/CRITICAL_REVIEW.md).
 5. The confidence score stays internal; users see one of four calibration-honest labels instead of a percentage.
 6. Contradicting sources are shown side by side instead of being averaged.
 7. The system avoids guarantee language: routes carry `"routing": "demonstration"` and hedged wording by construction.
@@ -113,7 +115,7 @@ Geography is not scattered through the code: everything location-specific — ma
 | `npm run dev:web` | Run the web app on `:3000` |
 | `npm run build` | Build every workspace in dependency order |
 | `npm run check` | `tsc --noEmit` across all workspaces |
-| `npm test` | 89 Vitest evals: safety validator, dedup, freshness, hardening invariants, acceptance scenario, Camp Fire real-to-sim benchmark |
+| `npm test` | 108 Vitest evals: safety validator, dedup, freshness, hardening invariants, acceptance scenario, Camp Fire real-to-sim benchmark |
 
 ## Project layout
 
@@ -143,7 +145,7 @@ MIT. See [LICENSE](LICENSE).
 > Sentient Labs hackathon project. The hackathon version proved the concept and won
 > the award. The rebuild brings it up to current engineering and research practice:
 > an evidence-first architecture with provenance and freshness on every record, a
-> safety validator gating all model output, 89 automated evals including the full
+> safety validator gating all model output, 108 automated evals including the full
 > acceptance scenario, a research-driven security and correctness hardening pass
 > (rate limiting, bounded SSE, store lifecycle, prompt-injection defenses,
 > read-time confidence decay, the five-element warning rule — see

@@ -198,6 +198,13 @@ connectors, tier assignments, and geography.
 
 ---
 
+## Known correctness gap: LLM claim grounding
+
+The [critical review](./CRITICAL_REVIEW.md) found that the optional LLM validator can accept a statement that a named, freshly recorded closed shelter is open. Its operational-word check establishes that some resource evidence exists, not that each claim matches the named resource's status. Regex expansion alone cannot prove semantic agreement.
+
+- **Seam:** `validateResponse`, the LLM response contract, and deterministic operational rendering.
+- **Trigger:** before relying on optional LLM wording for operational decisions. Constrain operational claims to record IDs and allowed fields, validate their values, and render those claims deterministically; add adversarial paraphrase and contradictory-status evaluations. This remains unresolved by the routing patch.
+
 ## Also deferred, smaller
 
 | Item | Seam | Trigger |

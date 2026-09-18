@@ -1,3 +1,5 @@
+import type { NearbyResource } from "@harborline/event-schema";
+
 /**
  * Intent router. Keyword matching only — deliberately not a model call, because
  * the planner decides which structured tools run and must be inspectable.
@@ -30,4 +32,16 @@ export function planQuery(question: string): QueryPlan {
   if (RESOURCE.test(q)) return { intent: "resource_query" };
   if (AREA.test(q)) return { intent: "area_status" };
   return { intent: "general" };
+}
+
+/** Choose the destination before routing or wording so both use the same order. */
+export function rankResources(question: string, resources: NearbyResource[]): NearbyResource[] {
+  const preferAccessibility = /\b(wheelchair|accessib\w*|ada|disab\w*|mobility)\b/i.test(question);
+  return [...resources].sort((a, b) => {
+    if (preferAccessibility) {
+      const rank = Number(b.accessibility_features.length > 0) - Number(a.accessibility_features.length > 0);
+      if (rank !== 0) return rank;
+    }
+    return a.distance_m - b.distance_m;
+  });
 }

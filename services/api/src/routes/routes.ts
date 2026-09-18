@@ -62,13 +62,25 @@ routesRoutes.get("/", (c) => {
 
   const result = tools.calculate_routes({ store, now: new Date() }, parsed.data);
 
+  if (result.destination_rejected_reason) {
+    return c.json({
+      error: "destination_unavailable",
+      message: "This destination does not meet the current resource recommendation policy.",
+      rejected_reason: result.destination_rejected_reason,
+      candidates: [],
+      destination: result.destination,
+      routing: result.routing,
+      generated_at: result.generated_at,
+    }, 422);
+  }
+
   if (!result.recommendation) {
     // Candidates are still returned: the elimination reasons are the answer.
     return c.json(
       {
         error: "no_viable_route",
         message:
-          "No route to this destination avoids the reported closures. Contact local emergency services.",
+          "No route to this destination is verified by the demonstration graph. Contact local emergency services for directions.",
         candidates: serializableCandidates(result.candidates),
         destination: result.destination,
         routing: result.routing,
