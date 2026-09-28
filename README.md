@@ -1,4 +1,4 @@
-# Harborline (Best Use of the Agent @ Sentient Labs Hackathon)
+# Harborline (Best Use of the Agent @ UW Sentient Labs Hackathon)
 
 <p align="center">
   <img src="assets/concept.png" alt="Harborline — the calmest point in every crisis. A community-first disaster clarity system powered by Sentient GRID, delivering fast, localized situation summaries and safe movement guidance" width="100%">
