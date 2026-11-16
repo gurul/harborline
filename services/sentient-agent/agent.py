@@ -9,8 +9,9 @@ as Sentient Chat events:
 
   EVIDENCE     emit_json  — the sources backing the answer (provider, tier, age)
   ANSWER       text stream — answer_markdown, streamed in chunks
+  LOCATION     emit_text_block — the location the answer assumes
   ACTION       emit_text_block — the one-line recommended action, when present
-  CAVEATS      emit_json  — freshness and uncertainty notes
+  CAVEATS      emit_json  — freshness, uncertainty and location notes
 
 Run:  python agent.py           (serves on :8100 by default)
 Env:  HARBORLINE_API_URL (default http://localhost:8787)
@@ -35,6 +36,18 @@ HARBORLINE_API_URL = os.environ.get("HARBORLINE_API_URL", "http://localhost:8787
 DEFAULT_LAT = float(os.environ.get("HARBORLINE_LAT", "39.7285"))
 DEFAULT_LON = float(os.environ.get("HARBORLINE_LON", "-121.8375"))
 ANSWER_CHUNK_CHARS = 160
+# Every user is answered for this one configured point, so every answer says so:
+# distances and routes are wrong for anyone who is somewhere else.
+LOCATION_NOTE = (
+    f"This answer assumes you are at {DEFAULT_LAT:.4f}, {DEFAULT_LON:.4f}, the "
+    "agent's configured location, not your own. Distances and routes are "
+    "measured from that point."
+)
+# Honest messages for the API's client errors, instead of "unreachable".
+STATUS_MESSAGES = {
+    429: "Harborline is busy right now (rate limited). Wait a minute and ask again.",
+    400: "Harborline could not accept the question. Keep it under 500 characters and ask again.",
+}
 
 
 class HarborlineAgent(AbstractAgent):
@@ -61,6 +74,18 @@ class HarborlineAgent(AbstractAgent):
                 )
                 api_response.raise_for_status()
                 answer = api_response.json()
+        except httpx.HTTPStatusError as err:
+            status = err.response.status_code
+            await response_handler.emit_error(
+                STATUS_MESSAGES.get(
+                    status,
+                    f"Harborline returned HTTP {status}. "
+                    "No answer is better than an unverified one.",
+                ),
+                status,
+            )
+            await response_handler.complete()
+            return
         except httpx.HTTPError as err:
             await response_handler.emit_error(
                 f"Harborline service unreachable: {err}. "
@@ -80,6 +105,8 @@ class HarborlineAgent(AbstractAgent):
             },
         )
 
+        await response_handler.emit_text_block("LOCATION", LOCATION_NOTE)
+
         # The validated answer, streamed the way Sentient Chat expects.
         stream = response_handler.create_text_stream("ANSWER")
         markdown = answer.get("answer_markdown", "")
@@ -97,8 +124,8 @@ class HarborlineAgent(AbstractAgent):
             for key in ("freshness_note", "uncertainty_note")
             if answer.get(key)
         }
-        if caveats:
-            await response_handler.emit_json("CAVEATS", caveats)
+        caveats["location_note"] = LOCATION_NOTE
+        await response_handler.emit_json("CAVEATS", caveats)
 
         await response_handler.complete()
 

@@ -12,8 +12,14 @@ the ground-truth benchmark Harborline is evaluated against.
 Two artifacts implement it:
 
 - **`evals/src/real2sim-campfire.test.ts`** — an executable replay: the real
-  timeline mapped onto the sim clock, with assertions at each checkpoint.
+  timeline mapped onto the sim clock, with assertions at each checkpoint. The
+  scenario is seeded once at T0 and queried at T0+80 min, T0+2 h 35 min and
+  T0+5 h, so records age between checkpoints. Each scorecard row below has
+  tests named `criterion N <verdict>: …`.
 - **`evals/src/benchmark.test.ts`** — the Feather River rule in isolation.
+- **`npm run scorecard`** — runs the replay and computes the score from its
+  results. `npm run scorecard -- --verify-docs` fails unless this page and the
+  README state the computed count and every row's verdict matches the tests.
 
 ## Real → sim mapping
 
@@ -37,10 +43,10 @@ the replay eval, 🟡 = verified by probe/inspection, ⛔ = documented gap.
 |---|---|---|---|
 | 06:15 | PG&E logs the Caribou-Palermo fault; C-hook failure drops a conductor | Ingestion tier: an official report becomes a record only when a source publishes one — no fabrication ahead of evidence | 🟡 by design |
 | 06:25 | First 911 to CAL FIRE ECC (**T0**) | Fire record active; surfaced for the user's radius with provider + age on every field | ✅ replay T0 |
-| 07:23–07:46 | First order (Pulga) → first Paradise zone orders — **after** the fire reached town at 07:44; only ~7k of 52k ever alerted | With **no** `evacuation_order` record on file, the fire still surfaces and "should I stay?" still answers *leave* — advice from observations, not from order coverage | ✅ replay T0 · 🟡 probe: "Should I stay home?" → "Do not stay" |
-| ~07:45 | Feather River Hospital evacuates ~67–80 patients, one mid-surgery; its own roster still reads "open" | A fresh, open facility inside the hazard polygon is rejected: `inside_hazard_zone`. Its "open" status does not save it | ✅ replay T0+80m |
-| 08:00–14:15 | Every egress artery closed ≥1 time; ≥2 of 4 simultaneously closed 68% of the window; ~4 mph crawl; cars abandoned on Pearson Rd | Routes crossing a reported closure are **eliminated**, not down-ranked; survivors are risk-scored and phrased "lowest-risk route currently available", never "safe" | ✅ replay T0+2h35m |
-| ~09:00+ | Road状态 changed faster than any channel tracked | `road_closure` records expire from the recommendation basis after 4 h; every answer carries the record's age and "conditions may change" | ✅ replay perishability |
+| 07:23–07:46 | First order (Pulga) → first Paradise zone orders — **after** the fire reached town at 07:44; only ~7k of 52k ever alerted | With **no** `evacuation_order` record on file, the fire still surfaces, and "Should I stay home?" relays the fire's official instruction ("do not wait for a mandatory order") plus the act-now note — advice from observations, not from order coverage. The deterministic answer does not itself say "leave" | ✅ replay T0 |
+| ~07:45 | Feather River Hospital evacuates ~67–80 patients, one mid-surgery; its own roster still reads "open" | A fresh, open facility inside the hazard polygon is rejected: `inside_hazard_zone`. Its "open" status does not save it, and neither does the fire record being past its 1 h freshness budget (84 min old at this checkpoint): containment fails closed | ✅ replay T0+80m |
+| 08:00–14:15 | Every egress artery closed ≥1 time; ≥2 of 4 simultaneously closed 68% of the window; ~4 mph crawl; cars abandoned on Pearson Rd | Routes crossing a reported closure, an evacuation zone, or a severe fire, flood or landslide area are **eliminated**, not down-ranked; survivors are risk-scored and phrased "lowest-risk route currently available", never "safe" | ✅ replay T0+2h35m |
+| ~09:00+ | Road status changed faster than any channel tracked | At T0+5 h the closure records are past their 4 h budget. They are flagged stale and shown with their age, and they still eliminate routes: a closure is never lifted because nobody re-confirmed it. Every answer carries the record's age and "conditions may change" | ✅ replay T0+5h |
 | Mid-morning | Skyway contraflow delayed awaiting CHP; initiated manually by a local official | Out of scope: Harborline informs civilians; it does not command traffic operations. Surfaced as a limitation | ⛔ scope |
 | Nov 8 evening | Shelters overflow; spontaneous Walmart-lot camp forms | At-capacity shelter rejected as `full` with capacity numbers shown; stale statuses rejected after 24 h with age shown | ✅ replay + acceptance scenario |
 | Nov 14–17 | Norovirus at 4 shelters (140+ symptomatic); camp cleared while official shelters degraded | `health_advisory` on resources, surfaced with every recommendation and on the named plan-B option — an "open" status can no longer hide a public-health caveat | ✅ replay criteria 7+11 |
@@ -52,21 +58,25 @@ Derived from the documented failures; each row cites its real-event basis.
 
 | # | Criterion | Verdict | Evidence |
 |---|---|---|---|
-| 1 | Never route toward/through the hazard, even if shortest | **Met** (verified hazards) | Router eliminates `closure_intersection` / `evacuation_zone`; severity-scaled point standoffs. Projected-spread modelling: roadmap |
-| 2 | Road/status data treated as perishable | **Met** | Freshness budgets per type; ages on every claim; stale ⇒ excluded from recommendations |
+| 1 | Never route toward/through the hazard, even if shortest | **Partial** | Router eliminates `closure_intersection`, `evacuation_zone` and `hazard_zone` (fire, flood or landslide areas of severity severe or higher); severity-scaled point standoffs. A route through a lower-severity hazard area or a point standoff is kept, risk-penalised and disclosed in the summary ("passes through or near N reported hazard areas") — it still goes through the hazard. Projected-spread modelling: roadmap |
+| 2 | Road/status data treated as perishable | **Met** | Freshness budgets per type; ages on every claim; a stale record is flagged and never described as current. A stale record that would permit an action (a shelter reported open) is excluded from recommendations. A stale record that forbids one (a closure, a hazard area) fails closed: it keeps blocking routes and excluding shelters until it is withdrawn |
 | 3 | State plainly when no safe route exists | **Met** | When every candidate is eliminated the answer says "no route is currently verified as passable" and gives refuge-in-place direction (cleared open ground — the NIST-documented TRA pattern); eval-pinned |
-| 4 | Never gate advice on alert delivery | **Met** | Answers derive from records, not order coverage; "do not stay" issued with no order on file |
-| 5 | Detect channel failure rather than assume delivery | **Met** (within scope) | Per-source health now includes `last_success_records` — a source that fetches fine but contributes zero records is visible at a glance, the "green-but-empty" mode that hid both connector bugs found in this audit. Outbound alert channels (WEA) belong to the alert originator |
+| 4 | Never gate advice on alert delivery | **Met** | Answers derive from records, not order coverage: with no order on file, "Should I stay home?" relays the fire's "do not wait for a mandatory order" instruction and the act-now note |
+| 5 | Detect channel failure rather than assume delivery | **Met** (within scope) | Per-source health includes `last_success_records` — a source that fetches fine but contributes zero records is visible at a glance, the "green-but-empty" mode that hid both connector bugs found in an earlier audit; a failing source shows `healthy: false` and its failure count (eval-pinned). Outbound alert channels (WEA) belong to the alert originator |
 | 6 | Flag when staged plans are outpaced by spread rate | **Met** (via CAP urgency) | An active severe/extreme hazard marked `immediate` appends "act on current conditions now rather than waiting for a zone-by-zone instruction" to every answer; eval-pinned. A quantitative spread-rate model stays roadmap |
 | 7 | Shelter recommendations capacity- and health-aware | **Met** | Capacity: full ⇒ rejected, numbers shown. Health: `health_advisory` field on resources, surfaced with the recommendation ("Health advisory: …"), never hidden behind `open`; eval-pinned |
-| 8 | Exclude facilities inside the hazard or themselves evacuating | **Met (new)** | `inside_hazard_zone` rejection added from this benchmark; fresh+open+in-zone ⇒ rejected |
+| 8 | Exclude facilities inside the hazard or themselves evacuating | **Met** | `inside_hazard_zone` rejection; fresh+open+in-zone ⇒ rejected, including when the hazard record is past its freshness budget. "Themselves evacuating" is covered only when a record says the facility is closed |
 | 9 | Proactive capacity actions (contraflow) | **Out of scope** | Civilian-information system, not traffic command |
-| 10 | Prioritize mobility-limited users | **Met** (within scope) | Accessibility features surfaced per shelter, and when the question asks about accessibility a verified-accessible shelter outranks a marginally nearer one without recorded features (eval-pinned). Dispatching assisted evacuation is an emergency-operations function |
+| 10 | Prioritize mobility-limited users | **Met** (within scope) | Accessibility features surfaced per shelter, and when the question asks about accessibility any shelter with recorded accessibility features inside the 8 km search radius outranks every shelter without them, whatever the distance (eval-pinned). Dispatching assisted evacuation is an emergency-operations function |
 | 11 | Balance destinations against receiver capacity | **Partial** | The answer now names the explicit plan B ("If it is full when you arrive, next option: …") with its own capacity and freshness; multi-city load balancing needs region-scale occupancy data and stays roadmap |
 | 12 | Provenance + timestamp on every advisory; contradictions reconciled explicitly | **Met** | Sources/tier/`last_verified_at` on every answer; `contradiction_note` keeps the official record standing while showing the dispute |
 
-**Score: 10 met · 1 partial · 1 out-of-scope** (of 12). The benchmark has
-produced code in three passes:
+Score: **9 of 12 criteria met** · 2 partial · 1 out of scope. The count is
+computed by `npm run scorecard` from the replay's test results; CI runs it with
+`--verify-docs`. An earlier version of this page stated 10 met: criterion 1 was
+marked met while a route through a severe fire could be recommended, and the
+score was typed by hand (docs/CRITICAL_REVIEW.md, 2026-11-15). The benchmark has
+produced code in four passes:
 
 - **Pass 1 — the Feather River rule (criterion 8):** `inside_hazard_zone`
   rejection in `packages/agent-tools/src/tools.ts`.
@@ -81,16 +91,25 @@ produced code in three passes:
   green-but-empty channel is detectable (criterion 5), and
   accessibility-aware shelter ranking when the question asks for it
   (criterion 10).
+- **Pass 4 — judge fixes (2026-11-15):** severe area hazards eliminate routes
+  (`hazard_zone`) and the summary discloses any hazard a kept route crosses
+  (criterion 1, now partial); hazard containment fails closed on stale
+  records (criterion 8); the replay ages records instead of reseeding at each
+  checkpoint; the score is computed from named tests.
 
 ## What remains, and why
 
-1. **Criterion 11 (receiver-city balancing) — partial pending data.** The
+1. **Criterion 1 (hazard avoidance) — partial by policy.** Only severe or
+   extreme fire, flood and landslide areas eliminate a route. Eliminating every
+   lower-severity crossing would turn more answers into "no route"; the router
+   instead penalises and discloses them. Projected fire spread is not modelled.
+2. **Criterion 11 (receiver-city balancing) — partial pending data.** The
    answer names an explicit plan-B destination with capacity and freshness;
    region-scale balancing needs occupancy aggregation across towns, and the
    demo region has one receiver city.
-2. **Criterion 9 (contraflow) — out of scope.** Traffic command, not civilian
+3. **Criterion 9 (contraflow) — out of scope.** Traffic command, not civilian
    information.
-3. **Criterion 6 quantitative extension:** a true spread-rate model (fire
+4. **Criterion 6 quantitative extension:** a true spread-rate model (fire
    perimeter growth over successive records) would upgrade the CAP-urgency
    trigger to a measured one.
 

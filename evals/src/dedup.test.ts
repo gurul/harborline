@@ -93,7 +93,7 @@ describe("two providers describing one fire", () => {
     ]);
     expect(stored.source_records.map((r) => r.provider).sort()).toEqual([
       "Butte County Emergency Management",
-      "CAL FIRE",
+      "DEMO · CAL FIRE",
     ]);
     // The higher-authority tier still governs the event.
     expect(stored.event.best_tier).toBe("A");

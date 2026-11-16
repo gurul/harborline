@@ -109,6 +109,7 @@ export function tierLabel(tier: SourceTier): string {
 export const REJECTED_REASON_TEXT: Record<string, string> = {
   closure_intersection: "crosses a reported road closure",
   evacuation_zone: "enters an active evacuation zone",
+  hazard_zone: "crosses a severe fire, flood or landslide area",
   no_path: "no connected path in the demonstration graph",
   stale_status: "status not re-verified inside its freshness window",
   inside_hazard_zone: "inside an active hazard area",

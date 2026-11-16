@@ -23,7 +23,7 @@ export const RouteCandidateSchema = z.object({
   risk_score: z.number(),
   eliminated: z.boolean(),
   rejected_reason: z
-    .enum(["closure_intersection", "evacuation_zone", "no_path"])
+    .enum(["closure_intersection", "evacuation_zone", "hazard_zone", "no_path"])
     .nullable(),
 });
 export type RouteCandidate = z.infer<typeof RouteCandidateSchema>;

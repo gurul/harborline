@@ -48,7 +48,7 @@ below disagrees with this table, this table wins.
 
 | Boundary | Limit | Behavior when exceeded |
 |---|---|---|
-| Rate limit, all `/v1/*` | 120 req/min per IP (token bucket, socket address; first `x-forwarded-for` entry only when `TRUST_PROXY=1`) | `429 {"error":"rate_limited"}` with `Retry-After` |
+| Rate limit, all `/v1/*` | 120 req/min per IP (token bucket, socket address; last `x-forwarded-for` entry, the one the trusted proxy appended, only when `TRUST_PROXY=1`) | `429 {"error":"rate_limited"}` with `Retry-After` |
 | Rate limit, `POST /v1/assistant/ask` | 6 req/min per IP | `429`, same shape |
 | Request body, `/v1/assistant/*` | 8 KiB | `413 {"error":"payload_too_large"}` |
 | List size, `/v1/events` and `/v1/resources` | `limit` query param — integer 1–200, default 100 | Results sliced after ordering |
@@ -281,7 +281,7 @@ curl -s http://localhost:8787/v1/events/cpw-closure-oleander-ave-20260802 | jq
     {
       "source_record_id": "src-cpw-8841",
       "event_id": "cpw-closure-oleander-ave-20260802",
-      "provider": "Chico Public Works",
+      "provider": "DEMO · Chico Public Works",
       "provider_record_id": "CPW-2026-08-02-0117",
       "provider_tier": "B",
       "source_url": "https://chico.ca.us/publicworks/closures/CPW-2026-08-02-0117",
@@ -352,7 +352,7 @@ curl -s "http://localhost:8787/v1/resources?lat=39.7398&lon=-121.8432&type=shelt
       "pet_policy": "Service animals only",
       "contact_information": "(530) 555-0163",
       "last_verified_at": "2026-08-02T18:25:00Z",
-      "provider": "Butte County Emergency Management",
+      "provider": "DEMO · Butte County Emergency Management",
       "provider_tier": "B",
       "source_url": "https://demo.harborline.local/shelters/chico-community-center",
       "distance_m": 253
@@ -370,7 +370,7 @@ curl -s "http://localhost:8787/v1/resources?lat=39.7398&lon=-121.8432&type=shelt
       "pet_policy": "Pets allowed (leashed or crated)",
       "contact_information": "(530) 555-0142",
       "last_verified_at": "2026-08-02T18:32:00Z",
-      "provider": "Butte County Emergency Management",
+      "provider": "DEMO · Butte County Emergency Management",
       "provider_tier": "B",
       "source_url": "https://demo.harborline.local/shelters/neighborhood-church",
       "distance_m": 1432
@@ -388,7 +388,7 @@ curl -s "http://localhost:8787/v1/resources?lat=39.7398&lon=-121.8432&type=shelt
       "pet_policy": "Service animals only",
       "contact_information": "(530) 555-0177",
       "last_verified_at": "2026-08-01T16:40:00Z",
-      "provider": "Butte County Emergency Management",
+      "provider": "DEMO · Butte County Emergency Management",
       "provider_tier": "B",
       "source_url": "https://demo.harborline.local/shelters/bidwell-community-center",
       "distance_m": 1447
@@ -432,11 +432,11 @@ curl -s http://localhost:8787/v1/resources/demo-shelter-neighborhood-church | jq
     "capacity_total": 200,
     "capacity_available": 120,
     "last_verified_at": "2026-08-02T18:32:00Z",
-    "provider": "Butte County Emergency Management",
+    "provider": "DEMO · Butte County Emergency Management",
     "provider_tier": "B",
     "source_url": "https://demo.harborline.local/shelters/neighborhood-church"
   },
-  "provider": "Butte County Emergency Management",
+  "provider": "DEMO · Butte County Emergency Management",
   "provider_tier": "B",
   "source_url": "https://demo.harborline.local/shelters/neighborhood-church",
   "last_verified_at": "2026-08-02T18:32:00Z",
@@ -609,13 +609,13 @@ curl -s -X POST http://localhost:8787/v1/assistant/ask \
   "recommended_action": "Head to Neighborhood Church, The Esplanade & E 9th Ave. Call (530) 555-0142 before travelling to confirm space is still available.",
   "sources": [
     {
-      "provider": "Butte County Emergency Management",
+      "provider": "DEMO · Butte County Emergency Management",
       "tier": "B",
       "url": "https://demo.harborline.local/shelters/neighborhood-church",
       "last_verified_at": "2026-08-02T18:32:00Z"
     },
     {
-      "provider": "Butte County Emergency Management",
+      "provider": "DEMO · Butte County Emergency Management",
       "tier": "B",
       "url": "https://demo.harborline.local/shelters/chico-community-center",
       "last_verified_at": "2026-08-02T18:25:00Z"

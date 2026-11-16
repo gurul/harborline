@@ -14,10 +14,13 @@ export function uptimeSeconds(): number {
   return Math.round((Date.now() - BOOT_AT) / 1000);
 }
 
-/** DEMO_MODE defaults ON: enabled when unset or "1". */
+/**
+ * DEMO_MODE is off unless set to exactly "1". The seeded fire is fiction over
+ * real streets; a deploy that forgets the variable must serve live data only.
+ * The `dev` script sets it.
+ */
 export function isDemoMode(): boolean {
-  const raw = process.env.DEMO_MODE;
-  return raw === undefined || raw === "" || raw === "1";
+  return process.env.DEMO_MODE === "1";
 }
 
 /**

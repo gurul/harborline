@@ -137,6 +137,6 @@ it("preserves stale-event metadata for the LLM after evidence consolidation", ()
     max_age_seconds: 3600,
     age_seconds: expect.any(Number),
     age_label: expect.any(String),
-    providers: expect.arrayContaining(["CAL FIRE"]),
+    providers: expect.arrayContaining(["DEMO · CAL FIRE"]),
   });
 });

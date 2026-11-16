@@ -20,7 +20,7 @@ sequence. It runs with no database, no Docker, and no API key.
 npm install
 npm run build
 
-# terminal 1 — API on :8787, DEMO_MODE=1 is the dev default
+# terminal 1 — API on :8787; the dev script sets DEMO_MODE=1
 npm run dev:api
 
 # terminal 2 — web on :3000
@@ -34,8 +34,9 @@ curl -s http://localhost:8787/v1/health | jq '.status, (.sources[] | select(.id=
 ```
 
 Expect `"ok"` and a `demo` source with `healthy: true` and a non-null `last_success_at`.
-If there is no `demo` source in the list, `DEMO_MODE` was set to `0` in the environment —
-unset it and restart.
+If there is no `demo` source in the list, `DEMO_MODE` is not `1`. It is off unless set to
+exactly `1`: `npm run dev:api` sets it, `npm start` does not. Set `DEMO_MODE=1` and restart.
+Demo records carry provider names prefixed `DEMO ·`.
 
 Open **<http://localhost:3000>**.
 
@@ -338,8 +339,8 @@ the sync cadence, stale records are excluded from recommendations with
 `rejected_reason: "stale_status"`, and the UI always shows the age. It cannot make the data
 fresher than the source. **Call before travelling.**
 
-**Routing is demonstration-grade.** The road graph is a hand-authored lattice of ~30–60
-nodes around the Avenues in Chico, not the full street network. Outside
+**Routing is demonstration-grade.** The road graph is a hand-authored lattice of 20
+nodes and 31 edges around the Avenues in Chico, not the full street network. Outside
 that footprint `/v1/routes` returns `422 unroutable`. Travel times are estimates from
 segment length, with no traffic, signals, grade, or turn restrictions. Every recommendation
 carries `"routing": "demonstration"` and phrases itself as "the lowest-risk route currently

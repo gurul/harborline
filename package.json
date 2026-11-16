@@ -12,9 +12,13 @@
     "evals"
   ],
   "scripts": {
-    "build": "npm run build -w packages/event-schema && npm run build -w packages/agent-tools && npm run build -w connectors && npm run build -w services/api && npm run build -w apps/web",
+    "build": "npm run build:libs && npm run build -w apps/web",
+    "build:libs": "npm run build -w packages/event-schema && npm run build -w packages/agent-tools && npm run build -w connectors && npm run build -w services/api",
+    "precheck": "npm run build:libs",
     "check": "npm run check --workspaces --if-present",
+    "pretest": "npm run build:libs",
     "test": "npm run test -w evals",
+    "scorecard": "node scripts/scorecard.mjs",
     "dev:api": "npm run dev -w services/api",
     "dev:web": "npm run dev -w apps/web"
   },

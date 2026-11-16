@@ -92,8 +92,10 @@ streaming: *evidence gathered* (events + resources with ages), *candidates rejec
 question to `POST /v1/assistant/ask`, and emits the pipeline's output as chat
 events over the framework's SSE `POST /assist` endpoint: `EVIDENCE`
 (`emit_json` — sources with provider, tier, `last_verified_at`), a chunked
-`ANSWER` text stream, `ACTION` (`emit_text_block`), and `CAVEATS` (freshness +
-uncertainty notes), then `complete()`. No decision logic moved out of
+`LOCATION` (the configured point every answer assumes), `ANSWER` text stream,
+`ACTION` (`emit_text_block`), and `CAVEATS` (freshness, uncertainty and location
+notes), then `complete()`. API `429` and `400` responses are reported as "busy" and
+"question not accepted" rather than "unreachable". No decision logic moved out of
 TypeScript — the adapter is pure presentation over already-validated output.
 
 ```bash

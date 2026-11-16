@@ -270,7 +270,9 @@ function routeSection(evidence: EvidenceBundle): string[] {
     !route.recommendation &&
     route.candidates.length > 0 &&
     route.candidates.every((c) => c.eliminated &&
-      (c.rejected_reason === "closure_intersection" || c.rejected_reason === "evacuation_zone"))
+      (c.rejected_reason === "closure_intersection" ||
+        c.rejected_reason === "evacuation_zone" ||
+        c.rejected_reason === "hazard_zone"))
   ) {
     lines.push(
       "No route is currently verified as passable. If leaving by road is not possible, " +
@@ -520,10 +522,15 @@ function recommendedAction(
       if (!rec) {
         return "A route to this shelter is not verified. Contact local emergency services for directions and re-check for updates before travelling.";
       }
+      const chosen = evidence.route?.candidates.find((c) => c.route_id === rec.route_id);
+      const crossed = chosen?.intersecting_event_ids.length ?? 0;
+      const crossing = crossed > 0
+        ? ` It passes through or near ${crossed} reported hazard area${crossed === 1 ? "" : "s"}.`
+        : "";
       return `Head for ${top.name} using the lowest-risk route currently available (about ${Math.max(
         1,
         Math.round(rec.duration_min),
-      )} min). Re-check before you leave — this reflects reports as of ${formatAge(
+      )} min).${crossing} Re-check before you leave — this reflects reports as of ${formatAge(
         top.last_verified_at,
         now,
       )}.`;

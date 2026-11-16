@@ -19,6 +19,12 @@
  * A separate 5-minute sweep expires and prunes stored events, so a long-running
  * process does not accumulate events past their retention window.
  *
+ * After a successful, non-empty fetch, records the same connector returned
+ * before but no longer returns are reconciled: shelters are marked closed and
+ * events expired. FEMA's layer lists only open shelters and NWS's
+ * `/alerts/active` lists only live alerts, so absence is their way of saying a
+ * record ended. An empty or failed fetch says nothing and changes nothing.
+ *
  * Health is observable per source via `getSourceHealth()`.
  */
 import type {
@@ -43,6 +49,9 @@ interface ConnectorState {
   health: SourceHealth;
   timer: ReturnType<typeof setTimeout> | null;
   stopped: boolean;
+  /** Ids returned by this connector's last non-empty fetch, per kind. */
+  seenEventIds: Set<string>;
+  seenResourceIds: Set<string>;
 }
 
 const states = new Map<string, ConnectorState>();
@@ -75,6 +84,7 @@ export function getSourceHealth(): SourceHealth[] {
 function applyItems(
   target: EventStore,
   result: Extract<ConnectorResult, { ok: true }>,
+  state: ConnectorState,
 ): { events: number; resources: number } {
   const byEvent = new Map<string, SourceRecord[]>();
   for (const record of result.source_records) {
@@ -90,8 +100,44 @@ function applyItems(
   for (const resource of result.resources) {
     target.upsertResource(resource);
   }
+  reconcileAbsent(target, result, state);
 
   return { events: result.events.length, resources: result.resources.length };
+}
+
+/** Close or expire what this connector stopped returning. See the header. */
+function reconcileAbsent(
+  target: EventStore,
+  result: Extract<ConnectorResult, { ok: true }>,
+  state: ConnectorState,
+): void {
+  if (result.resources.length > 0) {
+    const current = new Set(result.resources.map((r) => r.resource_id));
+    for (const id of state.seenResourceIds) {
+      if (current.has(id)) continue;
+      const resource = target.getResource(id);
+      if (resource && resource.operational_status !== "closed") {
+        target.upsertResource({
+          ...resource,
+          operational_status: "closed",
+          last_verified_at: result.retrieved_at,
+        });
+      }
+    }
+    state.seenResourceIds = current;
+  }
+
+  if (result.events.length > 0) {
+    const current = new Set(result.events.map((e) => e.event_id));
+    for (const id of state.seenEventIds) {
+      if (current.has(id)) continue;
+      const found = target.getEvent(id);
+      if (found && found.event.status === "active") {
+        target.upsertEvent({ ...found.event, status: "expired" }, []);
+      }
+    }
+    state.seenEventIds = current;
+  }
 }
 
 function errorMessage(err: unknown): string {
@@ -122,7 +168,7 @@ async function runOnce(state: ConnectorState, target: EventStore): Promise<boole
     // Inside the try on purpose: `applyItems` fans out to store listeners
     // (the SSE feed), and a listener that throws is a failed ingest — not a
     // reason to kill this connector's timer chain.
-    applyItems(target, result);
+    applyItems(target, result, state);
 
     state.health.healthy = true;
     state.health.last_success_at = result.retrieved_at;
@@ -241,6 +287,8 @@ export async function startScheduler(opts: SchedulerOptions): Promise<SchedulerS
         health: initialHealth(demoConnector),
         timer: null,
         stopped: false,
+        seenEventIds: new Set(),
+        seenResourceIds: new Set(),
       };
       states.set(demoConnector.id, demoState);
     }
@@ -255,6 +303,8 @@ export async function startScheduler(opts: SchedulerOptions): Promise<SchedulerS
         health: initialHealth(connector),
         timer: null,
         stopped: false,
+        seenEventIds: new Set(),
+        seenResourceIds: new Set(),
       };
       states.set(connector.id, state);
     } else if (state.timer) {

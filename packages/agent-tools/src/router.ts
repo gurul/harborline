@@ -2,9 +2,11 @@
  * Route-risk engine.
  *
  * Dijkstra over the bounded demo lattice, then k-alternatives by penalising the
- * edges already used and rerunning. Candidates that cross a reported closure or
- * an evacuation zone are ELIMINATED, not down-ranked — the recommendation only
- * ever chooses among survivors.
+ * edges already used and rerunning. Candidates that cross a reported closure, an
+ * evacuation zone, or a severe fire, flood or landslide area are ELIMINATED, not
+ * down-ranked — the recommendation only ever chooses among survivors. When no
+ * alternative survives, the search reruns on the graph with every eliminating
+ * edge removed, so an open route that the k alternatives missed is still found.
  *
  * This is a demonstration router. Every response carries
  * `routing: "demonstration"` and the recommendation language is
@@ -12,10 +14,12 @@
  */
 import {
   type CanonicalEvent,
+  type EventType,
   type LonLat,
   type Resource,
   type RouteCandidate,
   type RouteRecommendation,
+  SEVERITY_RANK,
   eventMaxAge,
   haversineMeters,
   isStale,
@@ -73,6 +77,50 @@ function hazardBufferMeters(event: CanonicalEvent): number {
  * answer is that the demonstration graph cannot route the request.
  */
 export const MAX_SNAP_M = 1500;
+
+/**
+ * Area hazards that eliminate a crossing route at severity severe or higher.
+ * Point geometries are excluded: a point says where a hazard was reported, not
+ * how far it reaches, so it adds exposure instead.
+ */
+const ZONE_HAZARD_TYPES: ReadonlySet<EventType> = new Set(["fire", "flood", "landslide"]);
+
+type RejectedReason = NonNullable<RouteCandidate["rejected_reason"]>;
+
+/**
+ * Why crossing `event` eliminates a route, or null when it only adds exposure.
+ * A zone that contains the user's own starting point does not eliminate:
+ * every route out of it starts inside it, and the user must still be able to
+ * leave.
+ */
+function eliminationReason(
+  event: CanonicalEvent,
+  originZones: ReadonlySet<string>,
+): RejectedReason | null {
+  if (event.event_type === "road_closure") return "closure_intersection";
+  if (originZones.has(event.event_id)) return null;
+  if (event.event_type === "evacuation_order") return "evacuation_zone";
+  if (
+    ZONE_HAZARD_TYPES.has(event.event_type) &&
+    event.geometry.type !== "Point" &&
+    SEVERITY_RANK[event.severity] >= SEVERITY_RANK.severe
+  ) {
+    return "hazard_zone";
+  }
+  return null;
+}
+
+/** Evacuation zones and area hazards that contain the route's origin. */
+function zonesContaining(pt: LonLat, events: CanonicalEvent[]): Set<string> {
+  const out = new Set<string>();
+  for (const event of events) {
+    if (event.event_type !== "evacuation_order" && !ZONE_HAZARD_TYPES.has(event.event_type)) {
+      continue;
+    }
+    if (pointInGeometry(pt, event.geometry, hazardBufferMeters(event))) out.add(event.event_id);
+  }
+  return out;
+}
 
 const MAX_ALTERNATIVES = 4;
 const PENALTY_FACTOR = 1.6;
@@ -214,6 +262,7 @@ function dijkstra(
   start: string,
   goal: string,
   penalties: Map<string, number>,
+  blocked: ReadonlySet<string> = new Set(),
 ): AdjacencyEntry[] | null {
   const dist = new Map<string, number>([[start, 0]]);
   const prev = new Map<string, { node: string; entry: AdjacencyEntry }>();
@@ -233,7 +282,7 @@ function dijkstra(
     visited.add(current);
 
     for (const entry of adjacency.get(current) ?? []) {
-      if (visited.has(entry.to)) continue;
+      if (visited.has(entry.to) || blocked.has(entry.edgeKey)) continue;
       const weight = entry.length_m * (penalties.get(entry.edgeKey) ?? 1);
       const next = currentDist + weight;
       if (next < (dist.get(entry.to) ?? Infinity)) {
@@ -271,11 +320,28 @@ function noPathCandidate(from: LonLat, to: LonLat): RouteCandidate {
   };
 }
 
+/** Edges that cross an eliminating event: removed before the fallback search. */
+function eliminatingEdgeKeys(
+  graph: RoadGraph,
+  events: CanonicalEvent[],
+  originZones: ReadonlySet<string>,
+): Set<string> {
+  const blocked = new Set<string>();
+  const eliminating = events.filter((e) => eliminationReason(e, originZones) !== null);
+  for (const edge of graph.edges) {
+    if (eliminating.some((event) => edgeIntersectsEvent(edge.geometry, event))) {
+      blocked.add(edgeKey(edge));
+    }
+  }
+  return blocked;
+}
+
 export function calculateRoutes(input: RouteInput, graph: RoadGraph = demoGraph): RouteResult {
   const adjacency = buildAdjacency(graph);
   const start = nearestNode(graph, input.from);
   const goal = nearestNode(graph, input.to);
   const activeEvents = input.events.filter((e) => e.status === "active");
+  const originZones = zonesContaining(input.from, activeEvents);
 
   // Off-graph request: refuse rather than route someone through a
   // neighbourhood they are not in.
@@ -283,26 +349,36 @@ export function calculateRoutes(input: RouteInput, graph: RoadGraph = demoGraph)
     return { candidates: [noPathCandidate(input.from, input.to)], best: null };
   }
 
-  const penalties = new Map<string, number>();
   const candidates: RouteCandidate[] = [];
   const seen = new Set<string>();
 
-  for (let i = 0; i < MAX_ALTERNATIVES; i++) {
-    const path = dijkstra(adjacency, start.id, goal.id, penalties);
-    if (path === null) break;
+  const enumerate = (blocked: ReadonlySet<string>) => {
+    const penalties = new Map<string, number>();
+    for (let i = 0; i < MAX_ALTERNATIVES; i++) {
+      const path = dijkstra(adjacency, start.id, goal.id, penalties, blocked);
+      if (path === null) break;
 
-    const signature = path.map((e) => e.edgeKey).join(">");
-    if (!seen.has(signature)) {
-      seen.add(signature);
-      candidates.push(
-        scorePath(`route_${candidates.length + 1}`, path, input, activeEvents),
-      );
-    }
+      const signature = path.map((e) => e.edgeKey).join(">");
+      if (!seen.has(signature)) {
+        seen.add(signature);
+        candidates.push(
+          scorePath(`route_${candidates.length + 1}`, path, input, activeEvents, originZones),
+        );
+      }
 
-    if (path.length === 0) break;
-    for (const entry of path) {
-      penalties.set(entry.edgeKey, (penalties.get(entry.edgeKey) ?? 1) * PENALTY_FACTOR);
+      if (path.length === 0) break;
+      for (const entry of path) {
+        penalties.set(entry.edgeKey, (penalties.get(entry.edgeKey) ?? 1) * PENALTY_FACTOR);
+      }
     }
+  };
+
+  // The penalised alternatives are a sample of the graph, not a search of it:
+  // all of them can share one blocked edge while an open path exists. The
+  // eliminated alternatives stay in the result as evidence of what was cut.
+  enumerate(new Set());
+  if (!candidates.some((c) => !c.eliminated)) {
+    enumerate(eliminatingEdgeKeys(graph, activeEvents, originZones));
   }
 
   if (candidates.length === 0) {
@@ -324,6 +400,7 @@ function scorePath(
   path: AdjacencyEntry[],
   input: RouteInput,
   events: CanonicalEvent[],
+  originZones: ReadonlySet<string>,
 ): RouteCandidate {
   const coordinates: LonLat[] = [input.from];
   for (const entry of path) {
@@ -355,7 +432,12 @@ function scorePath(
    * crosses a closure would be reported hazard-free purely because the router
    * had no edges to inspect.
    */
-  const checked: { geometry: LonLat[]; length_m: number; includeEndpoints?: boolean }[] =
+  const checked: {
+    geometry: LonLat[];
+    length_m: number;
+    includeEndpoints?: boolean;
+    skipLines?: boolean;
+  }[] =
     path.length > 0
       ? path.map((entry) => ({ geometry: entry.geometry, length_m: entry.length_m }))
       : [{ geometry: coordinates, length_m: distance, includeEndpoints: true }];
@@ -372,24 +454,31 @@ function scorePath(
       const length_m = polylineLength(geometry);
       // Even a zero-length approach checks the user's actual endpoint. The
       // junction margin on graph edges must not hide a hazard at that point.
-      checked.push({ geometry, length_m, includeEndpoints: true });
+      // A zero-length approach is only the intersection itself, though: a
+      // line closure that ends there closes the road beyond it, not the
+      // intersection, so line geometries are not checked against it.
+      checked.push({ geometry, length_m, includeEndpoints: true, skipLines: length_m < 1 });
     }
   }
 
   for (const entry of checked) {
     let edgeHazardCounted = false;
     for (const event of events) {
+      if (entry.skipLines && event.geometry.type === "LineString") continue;
       if (!edgeIntersectsEvent(entry.geometry, event, entry.includeEndpoints)) continue;
       intersecting.add(event.event_id);
 
-      if (event.event_type === "road_closure") {
+      const reason = eliminationReason(event, originZones);
+      if (reason !== null) {
         eliminated = true;
-        if (rejectedReason === null) rejectedReason = "closure_intersection";
-      } else if (event.event_type === "evacuation_order") {
-        eliminated = true;
-        // An evacuation zone is the stronger signal — it overrides a closure.
-        rejectedReason = "evacuation_zone";
-      } else if (!edgeHazardCounted) {
+        // An evacuation zone is the stronger signal — it overrides any other.
+        if (reason === "evacuation_zone" || rejectedReason === null) rejectedReason = reason;
+      }
+      // Exposure measures distance inside hazard areas, so an eliminated route
+      // through a fire still reports it. Closures and evacuation zones are
+      // boundaries, not areas of physical exposure.
+      const isBoundary = event.event_type === "road_closure" || event.event_type === "evacuation_order";
+      if (!isBoundary && !edgeHazardCounted) {
         hazardExposure += entry.length_m;
         edgeHazardCounted = true;
       }
@@ -430,10 +519,21 @@ export function buildRecommendation(
   evidenceEventIds: string[],
   now: Date,
 ): RouteRecommendation {
+  const crossed = best.intersecting_event_ids.length;
   const avoided = evidenceEventIds.filter(
     (id) => !best.intersecting_event_ids.includes(id),
   ).length;
   const minutes = Math.max(1, Math.round(best.duration_min));
+  const plural = (n: number, word: string) => `${n} ${word}${n === 1 ? "" : "s"}`;
+  // The summary must never call a route hazard-free when it crosses one: a
+  // kept route can still pass through a lower-severity area or a point buffer.
+  const hazardClause =
+    crossed > 0
+      ? `passes through or near ${plural(crossed, "reported hazard area")}` +
+        (avoided > 0 ? ` and avoids ${avoided} other${avoided === 1 ? "" : "s"}` : "")
+      : avoided > 0
+        ? `avoids ${plural(avoided, "reported hazard")}`
+        : "crosses no reported hazard area";
 
   return {
     recommendation_id: `rec_${destination.resource_id}_${now.getTime()}`,
@@ -441,7 +541,7 @@ export function buildRecommendation(
     destination_resource_id: destination.resource_id,
     summary:
       `Lowest-risk route currently available to ${destination.name} — ` +
-      `${minutes} min, avoids ${avoided} reported hazard${avoided === 1 ? "" : "s"}. ` +
+      `${minutes} min, ${hazardClause}. ` +
       `Conditions may change.`,
     duration_min: best.duration_min,
     avoided_hazard_count: avoided,

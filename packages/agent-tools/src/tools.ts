@@ -36,7 +36,7 @@ import {
   buildRecommendation,
   calculateRoutes,
 } from "./router.js";
-import { planQuery, rankResources } from "./planner.js";
+import { planQuery, rankResources, resourceTypeFor } from "./planner.js";
 import type { EvidenceBundle, RejectedResource } from "./composer.js";
 
 export interface ToolContext {
@@ -318,20 +318,29 @@ function get_event_details(
  * Camp Fire lesson (Feather River Hospital, 2018-11-08): a facility inside an
  * active hazard footprint is not a destination, whatever its own status record
  * says — the hospital's roster still read "open" while its staff were carrying
- * patients out through the fire. A resource sitting inside the geometry of a
- * fresh, active, severe-or-extreme blocking hazard is therefore rejected
- * outright, with the same severity-scaled point standoffs the router uses.
+ * patients out through the fire. A resource sitting inside the geometry of an
+ * active evacuation order, or of an active severe-or-extreme blocking hazard,
+ * is therefore rejected outright, with the same severity-scaled point
+ * standoffs the router uses.
+ *
+ * Fail closed on age: a hazard record past its freshness budget has not been
+ * re-confirmed, but it has not been withdrawn either. Ignoring it would use the
+ * missing update as evidence that the area is now clear.
  */
 function containingHazard(
   resource: Resource,
   hazards: CanonicalEvent[],
-  now: Date,
 ): CanonicalEvent | null {
   const at = resource.location.coordinates as LonLat;
   for (const event of hazards) {
     if (!HAZARD_EVENT_TYPES.includes(event.event_type)) continue;
-    if (event.severity !== "severe" && event.severity !== "extreme") continue;
-    if (isStale(event.last_verified_at, eventMaxAge(event.event_type), now)) continue;
+    if (
+      event.event_type !== "evacuation_order" &&
+      event.severity !== "severe" &&
+      event.severity !== "extreme"
+    ) {
+      continue;
+    }
     const buffer =
       event.geometry.type === "Point"
         ? POINT_HAZARD_RADIUS_M[event.severity]
@@ -378,7 +387,7 @@ function get_nearby_resources(
     const reason = classifyResource(resource, ctx.now);
     if (reason !== null) {
       rejected.push({ resource, rejected_reason: reason });
-    } else if (containingHazard(resource, hazards, ctx.now)) {
+    } else if (containingHazard(resource, hazards)) {
       rejected.push({ resource, rejected_reason: "inside_hazard_zone" });
     } else {
       recommendable.push(resource);
@@ -421,7 +430,7 @@ function calculate_routes(
 
   const events = ctx.store.queryEvents({ statuses: ["active"], now: ctx.now });
   const rejection = classifyResource(destination, ctx.now) ??
-    (containingHazard(destination, events, ctx.now) ? "inside_hazard_zone" : null);
+    (containingHazard(destination, events) ? "inside_hazard_zone" : null);
   if (rejection) {
     return {
       candidates: [],
@@ -587,7 +596,7 @@ export function gatherEvidence(
 
   if (intent === "nearest_shelter" || intent === "resource_query") {
     const resourceType: ResourceType | undefined =
-      intent === "nearest_shelter" ? "shelter" : undefined;
+      intent === "nearest_shelter" ? "shelter" : resourceTypeFor(question);
     const { recommendable, rejected } = tools.get_nearby_resources(ctx, {
       lat,
       lon,

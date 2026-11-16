@@ -84,10 +84,17 @@ assistantRoutes.post("/ask", async (c) => {
   // Anthropic and OpenAI are interchangeable wording layers behind the same
   // prompt, validator and deterministic fallback. Anthropic keeps precedence
   // for existing deploys; OPENAI_API_KEY alone routes through the Responses API.
-  const anthropicKey = process.env.ANTHROPIC_API_KEY;
-  const openAiKey = process.env.OPENAI_API_KEY;
-  const apiKey = anthropicKey ?? openAiKey;
-  if (apiKey && activeLlmCalls < MAX_CONCURRENT_LLM) {
+  // `||`, not `??`: an empty ANTHROPIC_API_KEY is "not configured" and must
+  // not shadow a real OpenAI key.
+  const anthropicKey = process.env.ANTHROPIC_API_KEY || undefined;
+  const openAiKey = process.env.OPENAI_API_KEY || undefined;
+  const apiKey = anthropicKey || openAiKey;
+  // When a route was computed and none survived, the only honest answer is the
+  // deterministic no-route guidance. Nothing checks free model text against
+  // the eliminated roads, so the model is not asked.
+  const noVerifiedRoute = evidence.route !== undefined && !evidence.route.recommendation;
+  const llmKey = noVerifiedRoute ? undefined : apiKey;
+  if (llmKey && activeLlmCalls < MAX_CONCURRENT_LLM) {
     activeLlmCalls += 1;
     try {
       // Only the prompt sees the capped bundle. Sources, freshness and evidence
@@ -95,7 +102,7 @@ assistantRoutes.post("/ask", async (c) => {
       // drop provenance from what the user is shown.
       const compose = anthropicKey ? llmCompose : llmComposeOpenAi;
       response = await compose(parsed.data.question, evidence, {
-        apiKey,
+        apiKey: llmKey,
         model: anthropicKey
           ? process.env.ANTHROPIC_MODEL
           : process.env.OPENAI_MODEL,
@@ -111,13 +118,21 @@ assistantRoutes.post("/ask", async (c) => {
     } finally {
       activeLlmCalls -= 1;
     }
-  } else if (apiKey) {
+  } else if (llmKey) {
     console.warn(
       `[assistant] llmCompose saturated (${activeLlmCalls}/${MAX_CONCURRENT_LLM} in flight), using deterministic composer`,
     );
   }
 
   if (response) {
+    // The action a person follows is never model text: it comes from the
+    // composer, which derives it from the route state. The model words the
+    // answer only.
+    response = {
+      ...response,
+      recommended_action: composeResponse(parsed.data.question, evidence, new Date())
+        .recommended_action,
+    };
     // Benchmark criterion 6 (Camp Fire): the act-now note for an
     // `immediate`-urgency severe hazard is a system guarantee, not a model
     // choice — the deterministic composer emits it itself; LLM answers get it

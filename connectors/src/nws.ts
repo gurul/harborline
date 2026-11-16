@@ -86,9 +86,17 @@ export function mapCertainty(raw: string | null | undefined): Certainty {
   return (CERTAINTIES as string[]).includes(v) ? (v as Certainty) : "unknown";
 }
 
-/** Only two CAP outcomes are modelled: flooding, and everything else weather. */
+/**
+ * CAP event name → canonical type. Evacuation and fire alerts are checked
+ * before flooding: typed as weather they would never block a route, exclude a
+ * shelter, or trip the evacuation-order validator rule.
+ */
 export function mapEventType(capEvent: string | null | undefined): EventType {
-  return (capEvent ?? "").toLowerCase().includes("flood") ? "flood" : "weather_warning";
+  const v = (capEvent ?? "").trim().toLowerCase();
+  if (v.includes("evacuation")) return "evacuation_order";
+  if (v === "fire warning") return "fire";
+  if (v.includes("flood")) return "flood";
+  return "weather_warning";
 }
 
 /**

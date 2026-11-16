@@ -54,16 +54,18 @@ export function trustProxy(env: Record<string, string | undefined> = process.env
 
 /**
  * Identify the caller: the socket address, unless TRUST_PROXY is set, in which
- * case the first `x-forwarded-for` entry (the only one a proxy is required to
- * set from the real peer). Spoofable only by the party we chose to trust —
- * which is why this is rate limiting and not authorization.
+ * case the last `x-forwarded-for` entry — the one the trusted proxy appended
+ * from the peer it saw. Every entry before it arrived from the client and can
+ * be anything, so keying on the first entry let a client pick a new bucket per
+ * request. This is rate limiting, not authorization.
  */
 export function clientKey(c: Context): string {
   if (trustProxy()) {
     const forwarded = c.req.header("x-forwarded-for");
     if (forwarded) {
-      const first = forwarded.split(",")[0]?.trim();
-      if (first) return first;
+      const hops = forwarded.split(",").map((s) => s.trim()).filter(Boolean);
+      const last = hops.at(-1);
+      if (last) return last;
     }
   }
   try {

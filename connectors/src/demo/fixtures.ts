@@ -37,6 +37,14 @@ export const DEMO_RESOURCE_IDS = {
   chico: "demo-shelter-chico-community-center",
 } as const;
 
+/**
+ * Prefix on every demo provider name. The scenario borrows real agency names
+ * over real streets; the prefix keeps a reader from mistaking a seeded record
+ * for one those agencies published.
+ */
+export const DEMO_PROVIDER_PREFIX = "DEMO · ";
+const demo = (provider: string) => `${DEMO_PROVIDER_PREFIX}${provider}`;
+
 /** Set on the Oleander Ave closure when the tier E report disputes it. */
 export const CLOSURE_CONTRADICTION_NOTE =
   "Chico Public Works lists this road as closed. A newer community report claims limited movement, but it has not been officially confirmed.";
@@ -211,7 +219,7 @@ export function buildDemoFixtures(now: Date): DemoFixtures {
       pet_policy: "Pets allowed (leashed or crated)",
       contact_information: "(530) 555-0142",
       last_verified_at: minutesBefore(now, 8),
-      provider: "Butte County Emergency Management",
+      provider: demo("Butte County Emergency Management"),
       provider_tier: "B",
       source_url: "https://demo.harborline.local/shelters/neighborhood-church",
     } satisfies Resource),
@@ -232,7 +240,7 @@ export function buildDemoFixtures(now: Date): DemoFixtures {
       pet_policy: "Service animals only",
       contact_information: "(530) 555-0177",
       last_verified_at: minutesBefore(now, 26 * 60),
-      provider: "Butte County Emergency Management",
+      provider: demo("Butte County Emergency Management"),
       provider_tier: "B",
       source_url: "https://demo.harborline.local/shelters/bidwell-community-center",
     } satisfies Resource),
@@ -251,7 +259,7 @@ export function buildDemoFixtures(now: Date): DemoFixtures {
       pet_policy: "Service animals only",
       contact_information: "(530) 555-0163",
       last_verified_at: minutesBefore(now, 15),
-      provider: "Butte County Emergency Management",
+      provider: demo("Butte County Emergency Management"),
       provider_tier: "B",
       source_url: "https://demo.harborline.local/shelters/chico-community-center",
     } satisfies Resource),
@@ -261,7 +269,7 @@ export function buildDemoFixtures(now: Date): DemoFixtures {
     makeSourceRecord({
       source_record_id: "demo-record-calfire",
       event_id: DEMO_EVENT_IDS.fire,
-      provider: "CAL FIRE",
+      provider: demo("CAL FIRE"),
       provider_record_id: "urn:calfire:demo:butte:east-chico",
       provider_tier: "A",
       source_url: "https://demo.harborline.local/alerts/evacuation-warning-east-chico",
@@ -277,7 +285,7 @@ export function buildDemoFixtures(now: Date): DemoFixtures {
     makeSourceRecord({
       source_record_id: "demo-record-cpw-oleander",
       event_id: DEMO_EVENT_IDS.closureOleander,
-      provider: "Chico Public Works",
+      provider: demo("Chico Public Works"),
       provider_record_id: "cpw-closure-oleander-3rd-5th",
       provider_tier: "B",
       source_url: "https://demo.harborline.local/closures/oleander-ave",
@@ -293,7 +301,7 @@ export function buildDemoFixtures(now: Date): DemoFixtures {
     makeSourceRecord({
       source_record_id: "demo-record-cpw-mangrove",
       event_id: DEMO_EVENT_IDS.closureMangrove,
-      provider: "Chico Public Works",
+      provider: demo("Chico Public Works"),
       provider_record_id: "cpw-closure-mangrove-5th-7th",
       provider_tier: "B",
       source_url: "https://demo.harborline.local/closures/mangrove-ave",
@@ -309,7 +317,7 @@ export function buildDemoFixtures(now: Date): DemoFixtures {
     makeSourceRecord({
       source_record_id: "demo-record-actionnews-fire",
       event_id: DEMO_EVENT_IDS.news,
-      provider: "Action News Now",
+      provider: demo("Action News Now"),
       provider_record_id: "actionnews-2026-east-chico-fire",
       provider_tier: "C",
       source_url: "https://demo.harborline.local/news/actionnews-fire-growth",
@@ -327,7 +335,7 @@ export function buildDemoFixtures(now: Date): DemoFixtures {
     makeSourceRecord({
       source_record_id: "demo-record-social-oleander",
       event_id: DEMO_EVENT_IDS.closureOleander,
-      provider: "Jim Adrian",
+      provider: demo("Jim Adrian"),
       provider_record_id: "social-post-8814",
       provider_tier: "E",
       source_url: "https://demo.harborline.local/community/posts/8814",

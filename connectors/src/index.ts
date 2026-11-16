@@ -15,6 +15,7 @@ export {
   DEMO_EVENT_IDS,
   DEMO_RESOURCE_IDS,
   CLOSURE_CONTRADICTION_NOTE,
+  DEMO_PROVIDER_PREFIX,
   type DemoFixtures,
 } from "./demo/fixtures.js";
 export { dedupKey, mergeEvents } from "./normalize.js";

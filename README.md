@@ -20,19 +20,19 @@ Built for the **Sentient Labs Hackathon (50 Selected Builders)**, where it won *
 
 ## What Harborline does
 
-1. **Ingest official sources.** Connectors poll NWS alerts, USGS earthquakes, and FEMA National Shelter System shelters on per-source schedules, with backoff, circuit breakers, and per-source health you can inspect at `/v1/health`.
+1. **Ingest official sources.** Connectors poll NWS alerts, USGS earthquakes, and FEMA National Shelter System shelters on per-source schedules, with backoff, circuit breakers, and per-source health you can inspect at `/v1/health`. When a successful, non-empty poll no longer returns a record the same source returned before, that shelter is marked closed and that alert expired; an empty or failed poll changes nothing.
 2. **Normalize everything into one event model.** Every record becomes a `CanonicalEvent` with CAP-style severity/urgency/certainty, GeoJSON geometry, and a `SourceRecord` trail. Repeat reports of the same event merge by id with the provenance trail intact; cross-provider dedup is built and eval-tested but not yet wired into ingest (see [docs/ROADMAP.md](./docs/ROADMAP.md)).
 3. **Score trust transparently.** Sources are tiered from A (issuing authority) down to E (unverified report). Internally, confidence is `authority × freshness × corroboration × precision × consistency`. Users only ever see one of four labels: `official / verified / developing / unverified`. There are no invented percentages.
-4. **Enforce freshness.** Every event and resource type has a maximum acceptable age. A shelter whose status is 26 hours old still appears, along with its age, but recommendations reject it with an explicit `stale_status` reason.
-5. **Route around verified hazards.** Candidate routes are intersected with hazard geometry. Routes that cross a closure or evacuation zone are eliminated, the survivors are risk-scored, and the answer is phrased as "the lowest-risk route currently available" rather than "safe".
-6. **Answer questions from evidence only.** The assistant plans which tools to run, gathers structured evidence, and composes an answer from deterministic templates, or from an optional LLM for wording. A safety validator checks for unsupported operational wording, stale-as-current language, guarantees, and missing sources; rejected answers fall back to the deterministic composer. These heuristic checks do not prove that every LLM claim matches the record (see [review findings](./docs/CRITICAL_REVIEW.md)).
+4. **Enforce freshness.** Every event and resource type has a maximum acceptable age. A shelter whose status is 26 hours old still appears, along with its age, but recommendations reject it with an explicit `stale_status` reason. Hazard records fail closed: a stale closure or fire is flagged with its age but still blocks routes and still excludes a shelter inside it.
+5. **Route around verified hazards.** Candidate routes are intersected with hazard geometry. Routes that cross a closure, an evacuation zone, or a fire, flood or landslide area of severity severe or higher are eliminated; if every alternative is cut, the search reruns with those roads removed before giving up. A user who starts inside an evacuation zone is routed out of it. The survivors are risk-scored, a kept route that still passes a lower-severity hazard says so, and the answer is phrased as "the lowest-risk route currently available" rather than "safe".
+6. **Answer questions from evidence only.** The assistant plans which tools to run, gathers structured evidence, and composes an answer from deterministic templates, or from an optional LLM for wording. The recommended action always comes from the deterministic composer, and the LLM is not called when no route is verified. A safety validator checks for unsupported operational wording, stale-as-current language, guarantees, and missing sources; rejected answers fall back to the deterministic composer. These heuristic checks do not prove that every LLM claim matches the record (see [review findings](./docs/CRITICAL_REVIEW.md)).
 7. **Show contradictions honestly.** When a social post disputes an official closure, the closure stays closed and gains a `contradiction_note`. Harborline does not average sources into a false consensus.
 
 ## Why it is different
 
-Most disaster chatbots put the model in front: they search, summarize, and hope the summary is right. Harborline puts a verified geospatial event layer in front and treats the model as a constrained interface to it, to constrain model output. Its heuristic validator catches specific failure patterns, but does not establish complete semantic grounding of optional LLM wording. The whole demo runs deterministically offline (`DEMO_MODE=1` seeds a California wildfire scenario over Chico), and 108 automated eval tests enforce the acceptance scenario and the hardening invariants: the stale shelter is rejected, the closed road is eliminated, and the lowest-risk route is recommended with sources and timestamps.
+Most disaster chatbots put the model in front: they search, summarize, and hope the summary is right. Harborline puts a verified geospatial event layer in front and treats the model as a constrained interface to it, to constrain model output. Its heuristic validator catches specific failure patterns, but does not establish complete semantic grounding of optional LLM wording. The whole demo runs deterministically offline (`DEMO_MODE=1` seeds a California wildfire scenario over Chico, with every demo provider name prefixed `DEMO ·`), and 133 automated eval tests enforce the acceptance scenario and the hardening invariants: the stale shelter is rejected, the closed road is eliminated, and the lowest-risk route is recommended with sources and timestamps.
 
-The [critical code review](./docs/CRITICAL_REVIEW.md) added regressions for consistent shelter selection and routing, hazard checks on route approaches, unavailable destinations, and travel advice when no route is verified. `.era/runtime` is local runtime state and is not included in the repository.
+The [critical code review](./docs/CRITICAL_REVIEW.md) added regressions for consistent shelter selection and routing, hazard checks on route approaches, unavailable destinations, and travel advice when no route is verified. A second review (2026-11-15) found routes through severe fire areas, stale hazards ignored in shelter checks, and a hand-typed benchmark score; its fixes and regressions are listed in the same document. `.era/runtime` is local runtime state and is not included in the repository.
 
 ## Research grounding
 
@@ -44,7 +44,7 @@ Harborline's demo is a wildfire evacuation near Chico, Butte County. The deadlie
 
 [docs/BENCHMARK.md](./docs/BENCHMARK.md) maps the real timeline onto the simulation **hour by hour** — first 911 call (06:25), fire reaching town before most evacuation orders (07:44 vs 07:46–09:03), Feather River Hospital evacuating patients mid-surgery while its roster still read "open", every egress artery closing, shelters overflowing into the Walmart parking lot — and derives **12 testable criteria** from those documented failures. An executable replay (`evals/src/real2sim-campfire.test.ts`) asserts Harborline's behavior at each mapped moment.
 
-Current scorecard: **10 criteria met, 1 partial, 1 out-of-scope** — the convergence point for the current scope and data sources. The benchmark produces code, not just grades. Its first product is the **Feather River rule** — a fresh, nominally "open" facility located inside an active severe hazard footprint is rejected outright (`rejected_reason: "inside_hazard_zone"`), because the most dangerous record in a disaster is the one that is accurate about status and silent about geography. A maximization pass then closed three more criteria: **refuge-in-place guidance** when every route is eliminated (the NIST temporary-refuge-area pattern), an **act-now note** when a severe hazard is marked `immediate` (the fire beat Paradise's first zone order by two minutes), and **shelter health advisories plus a named plan-B destination** (norovirus ran through four "open" shelters while overflow arrivals improvised in a parking lot). A convergence pass closed two more: **green-but-empty detection** on every ingest source (per-source `last_success_records` in `/v1/health` — the silent-channel failure class of the county's undetected WEA outage) and **accessibility-aware ranking** when the question asks for it. What remains is data- or role-bound — receiver-city load balancing needs multi-town occupancy data, and contraflow is traffic command — argued row by row in the benchmark.
+Current scorecard: **9 of 12 criteria met**, 2 partial, 1 out of scope. The count is computed from the replay's named tests by `npm run scorecard`, and CI fails if this line or the benchmark page disagrees with it. Criterion 1 (never route through the hazard) is partial: severe fire, flood and landslide areas eliminate a route, but a kept route may still pass a lower-severity hazard area, which the answer discloses. The benchmark produces code, not just grades. Its first product is the **Feather River rule** — a fresh, nominally "open" facility located inside an active severe hazard footprint is rejected outright (`rejected_reason: "inside_hazard_zone"`), because the most dangerous record in a disaster is the one that is accurate about status and silent about geography. A maximization pass then closed three more criteria: **refuge-in-place guidance** when every route is eliminated (the NIST temporary-refuge-area pattern), an **act-now note** when a severe hazard is marked `immediate` (the fire beat Paradise's first zone order by two minutes), and **shelter health advisories plus a named plan-B destination** (norovirus ran through four "open" shelters while overflow arrivals improvised in a parking lot). A convergence pass closed two more: **green-but-empty detection** on every ingest source (per-source `last_success_records` in `/v1/health` — the silent-channel failure class of the county's undetected WEA outage) and **accessibility-aware ranking** when the question asks for it. What remains: lower-severity hazard crossings (criterion 1), receiver-city load balancing, which needs multi-town occupancy data, and contraflow, which is traffic command — argued row by row in the benchmark.
 
 ## Sentient technology
 
@@ -55,7 +55,7 @@ Harborline was designed around Sentient's open-source GRID ecosystem, and one le
 ```mermaid
 flowchart LR
     A[NWS · USGS · FEMA · demo] --> B[Ingestion scheduler<br/>backoff + circuit breaker]
-    B --> C[Normalization<br/>dedup + merge, all source records kept]
+    B --> C[Normalization<br/>merge by event id, all source records kept]
     C --> D[Verification<br/>tier x freshness x corroboration → label]
     D --> E[(EventStore<br/>MemoryStore now, PostGIS later)]
     E --> F[Deterministic services<br/>stale rejection · route-risk]
@@ -74,7 +74,7 @@ Requires Node 20 or newer. You don't need a database, Docker, or any API keys.
 ```bash
 npm install
 npm run build      # schema → agent-tools → connectors → api → web
-npm run dev:api    # terminal 1 — API on :8787, DEMO_MODE=1 by default
+npm run dev:api    # terminal 1 — API on :8787; the dev script sets DEMO_MODE=1
 npm run dev:web    # terminal 2 — web on :3000
 ```
 
@@ -96,13 +96,13 @@ Open **<http://localhost:3000>**. The seeded scenario gives you an active wildfi
 | Variable | Scope | Default | Purpose |
 |---|---|---|---|
 | `PORT` | `services/api` | `8787` | API port |
-| `DEMO_MODE` | `services/api` | `1` in dev | Seeds the deterministic California wildfire scenario at boot; live connectors keep running. `0` for live-only |
+| `DEMO_MODE` | `services/api` | off (`npm run dev:api` sets `1`) | `1` seeds the deterministic California wildfire scenario at boot, with provider names prefixed `DEMO ·`; live connectors keep running. Unset or any other value: live feeds only, so `npm start` serves no demo data unless you set it |
 | `ANTHROPIC_API_KEY` | `services/api` | unset | Optional. Enables the LLM composer for wording; output still passes the safety validator or is discarded |
 | `ANTHROPIC_MODEL` | `services/api` | `claude-sonnet-5` | Composer model override; only read when the key is set |
 | `OPENAI_API_KEY` | `services/api` | unset | Optional. Same wording-composer role via the OpenAI Responses API; used when `ANTHROPIC_API_KEY` is not set. Same validator gate and deterministic fallback |
 | `OPENAI_MODEL` | `services/api` | `gpt-5.6-luna` | OpenAI composer model override; only read when that key is in use |
 | `ALLOWED_ORIGINS` | `services/api` | unset | Comma-separated CORS allowlist. Unset: localhost-only in dev, deny cross-origin in production |
-| `TRUST_PROXY` | `services/api` | unset | Set `1` only behind a TLS-terminating proxy: rate limiting then keys on `X-Forwarded-For` instead of the socket address |
+| `TRUST_PROXY` | `services/api` | unset | Set `1` only behind a TLS-terminating proxy that appends to `X-Forwarded-For`: rate limiting then keys on the last entry (the one the proxy added) instead of the socket address |
 | `NEXT_PUBLIC_API_URL` | `apps/web` | `http://localhost:8787` | REST + SSE base URL |
 
 Geography is not scattered through the code: everything location-specific — map centre, connector bounding box, NWS alert area, shelter state filter — lives in a single `RegionConfig` at `packages/event-schema/src/region.ts`. The default region is California, centred on Chico (Butte County). To point Harborline at a different area, change that one file; the seeded demo scenario and the demonstration road graph share the Chico geography and would be re-authored alongside it.
@@ -114,8 +114,11 @@ Geography is not scattered through the code: everything location-specific — ma
 | `npm run dev:api` | Run the API with the seeded demo scenario on `:8787` |
 | `npm run dev:web` | Run the web app on `:3000` |
 | `npm run build` | Build every workspace in dependency order |
-| `npm run check` | `tsc --noEmit` across all workspaces |
-| `npm test` | 108 Vitest evals: safety validator, dedup, freshness, hardening invariants, acceptance scenario, Camp Fire real-to-sim benchmark |
+| `npm run check` | Builds the libraries, then `tsc --noEmit` across all workspaces. Works from a clean clone |
+| `npm test` | Builds the libraries, then 133 Vitest evals (plus 1 skipped: the out-of-scope benchmark criterion): safety validator, dedup, freshness, hardening invariants, acceptance scenario, review regressions, Camp Fire real-to-sim benchmark |
+| `npm run scorecard` | Computes the Camp Fire scorecard from the replay tests; `-- --verify-docs` also checks this README and docs/BENCHMARK.md state the same count. Needs `npm run build` first |
+
+CI (`.github/workflows/ci.yml`) runs `npm ci`, build, check, test and the scorecard check on every push and pull request.
 
 ## Project layout
 
@@ -145,7 +148,7 @@ MIT. See [LICENSE](LICENSE).
 > Sentient Labs hackathon project. The hackathon version proved the concept and won
 > the award. The rebuild brings it up to current engineering and research practice:
 > an evidence-first architecture with provenance and freshness on every record, a
-> safety validator gating all model output, 108 automated evals including the full
+> safety validator gating all model output, 133 automated evals including the full
 > acceptance scenario, a research-driven security and correctness hardening pass
 > (rate limiting, bounded SSE, store lifecycle, prompt-injection defenses,
 > read-time confidence decay, the five-element warning rule — see

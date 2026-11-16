@@ -76,7 +76,7 @@ describe("(a) queryEvents at the user's location", () => {
     expect(instructions).not.toBeNull();
     expect(instructions!.instructions).toMatch(/do not wait for a mandatory order/i);
     expect(instructions!.stale).toBe(false);
-    expect(instructions!.providers).toContain("CAL FIRE");
+    expect(instructions!.providers).toContain("DEMO · CAL FIRE");
   });
 });
 
@@ -253,7 +253,7 @@ describe("(d) composeResponse for the nearest-shelter question", () => {
       expect(Number.isNaN(new Date(source.last_verified_at).getTime())).toBe(false);
     }
     const shelterSource = response.sources.find(
-      (s) => s.provider === "Butte County Emergency Management",
+      (s) => s.provider === "DEMO · Butte County Emergency Management",
     );
     expect(shelterSource).toBeDefined();
     expect(shelterSource!.last_verified_at).toBe(
@@ -296,9 +296,9 @@ describe("(e) the tier E report contradicting the Oleander Ave closure", () => {
   it("retains the tier E record as separate provenance on the closure", () => {
     const stored = store.getEvent(DEMO_EVENT_IDS.closureOleander)!;
     const providers = stored.source_records.map((r) => r.provider).sort();
-    expect(providers).toEqual(["Chico Public Works", "Jim Adrian"]);
+    expect(providers).toEqual(["DEMO · Chico Public Works", "DEMO · Jim Adrian"]);
 
-    const social = stored.source_records.find((r) => r.provider === "Jim Adrian")!;
+    const social = stored.source_records.find((r) => r.provider === "DEMO · Jim Adrian")!;
     expect(social.provider_tier).toBe("E");
     expect(social.source_record_id).toBe("demo-record-social-oleander");
   });

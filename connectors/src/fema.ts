@@ -69,6 +69,14 @@ function pickNumber(attrs: Attributes, candidates: string[]): number | null {
   return Number.isFinite(n) ? Math.round(n) : null;
 }
 
+/** Like pickNumber, without rounding: coordinates need their decimals. */
+function pickFloat(attrs: Attributes, candidates: string[]): number | null {
+  const value = pickAttribute(attrs, candidates);
+  if (value == null) return null;
+  const n = typeof value === "number" ? value : Number(String(value).trim());
+  return Number.isFinite(n) ? n : null;
+}
+
 /** Case-insensitive substring match on whatever the layer calls "status". */
 export function mapShelterStatus(raw: string | null): OperationalStatus {
   if (!raw) return "unknown";
@@ -158,8 +166,8 @@ function coordinatesOf(feature: z.infer<typeof FemaFeatureSchema>, attrs: Attrib
   const x = feature.geometry?.x;
   const y = feature.geometry?.y;
   if (typeof x === "number" && typeof y === "number") return asLonLat(x, y);
-  const lon = pickNumber(attrs, ["longitude", "lon", "x", "long"]);
-  const lat = pickNumber(attrs, ["latitude", "lat", "y"]);
+  const lon = pickFloat(attrs, ["longitude", "lon", "x", "long"]);
+  const lat = pickFloat(attrs, ["latitude", "lat", "y"]);
   if (lon !== null && lat !== null) return asLonLat(lon, lat);
   return null;
 }

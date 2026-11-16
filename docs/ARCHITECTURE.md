@@ -314,8 +314,11 @@ Helpers: `ageSeconds(lastVerifiedAt, now)`, `isStale(lastVerifiedAt, maxAgeSecon
 `"3 d ago"`.
 
 Freshness enters the system in three places, which is why it cannot be forgotten: it is a
-multiplicative factor in `computeConfidence`, a hard filter in the resource and routing
-tools, and violation class 2 in `validateResponse`.
+multiplicative factor in `computeConfidence`, a hard filter on resources that would be
+recommended, and violation class 2 in `validateResponse`. It is not a filter on hazards:
+a stale closure or fire still blocks routes and excludes shelters inside it, because a
+record nobody re-confirmed has not been withdrawn either. The router adds a flat stale
+penalty instead.
 
 ---
 
@@ -324,7 +327,8 @@ tools, and violation class 2 in `validateResponse`.
 Lives in `packages/agent-tools/src/router.ts`, shared by the API handler, the
 `calculate_routes` / `score_route_risk` tools, and the evals. Road graph:
 `packages/agent-tools/src/data/demo-graph.ts` — a hand-authored, bounded lattice of
-roughly 30–60 nodes on real streets around the Avenues neighborhood of Chico, CA.
+20 nodes and 31 undirected edges (four north-south roads crossed with five east-west
+avenues) on real streets around the Avenues neighborhood of Chico, CA.
 
 ```
   origin (lat, lon) + destination resource
@@ -335,7 +339,10 @@ roughly 30–60 nodes on real streets around the Avenues neighborhood of Chico, 
             ▼
   2. ENUMERATE   k-shortest paths, k ≤ 4
                  Dijkstra, then rerun with a penalty applied to
-                 edges already used, to force genuine alternatives
+                 edges already used, to force genuine alternatives.
+                 If none survives step 4, enumerate again on the
+                 graph with every eliminating edge removed, so an
+                 open route the alternatives missed is still found
             │
             ▼
   3. INTERSECT   for each candidate, test every segment against every
@@ -345,25 +352,37 @@ roughly 30–60 nodes on real streets around the Avenues neighborhood of Chico, 
                  → intersecting_event_ids, hazard_exposure_m
             │
             ▼
-  4. ELIMINATE   any candidate crossing a road_closure or an
-                 evacuation_order geometry is marked
+  4. ELIMINATE   any candidate crossing a road_closure, an
+                 evacuation_order, or a fire / flood / landslide
+                 area (non-point geometry, severity severe or
+                 extreme) is marked
                    eliminated: true
-                   rejected_reason: "closure_intersection" | "evacuation_zone"
+                   rejected_reason: "closure_intersection"
+                     | "evacuation_zone" | "hazard_zone"
+                 An evacuation zone or hazard area that contains the
+                 user's starting point does not eliminate: every
+                 route out of it starts inside it. A zero-length
+                 approach (the endpoint is a graph node) is not
+                 checked against line closures that merely end there.
+                 Stale records still eliminate: hazards fail closed.
                  Eliminated candidates are RETURNED, not hidden —
                  the rejection is part of the evidence.
             │
             ▼
-  5. SCORE       survivors:
-                   risk_score = travel
-                              + hazard_exposure
-                              + closure_penalty
-                              + stale_data_penalty
-                 stale_data_penalty rises when the hazard records the
-                 scoring depends on are past their freshness policy.
+  5. SCORE       every candidate:
+                   risk_score = travel_minutes
+                              + hazard_exposure_m / 100
+                              + 5 if any intersecting record is stale
+                 hazard_exposure_m is the length of checked segments
+                 inside a hazard area (closures and evacuation zones
+                 are boundaries and add none). The stale penalty is a
+                 flat 5; it does not grow with age.
             │
             ▼
   6. RECOMMEND   lowest risk_score wins → RouteRecommendation
-                   summary: "lowest-risk route currently available …"
+                   summary: "lowest-risk route currently available …",
+                     plus "passes through or near N reported hazard
+                     areas" whenever the chosen route intersects any
                    evidence_event_ids: the hazards actually considered
                    routing: "demonstration"   (literal type, always)
                  No survivor → recommendation: null, with the

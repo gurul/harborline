@@ -80,7 +80,7 @@ payloads with Zod, and **never throws to the scheduler** — it returns
 | `nws` | `https://api.weather.gov/alerts/active?area=<REGION.nwsArea>` (GeoJSON; `User-Agent` header required) | A | Map CAP severity/urgency/certainty straight through; keep alert geometry |
 | `usgs` | `https://earthquake.usgs.gov/earthquakes/feed/v1.0/summary/2.5_week.geojson` | A | Filter to the region bbox (`REGION.bbox` — California statewide by default); magnitude → severity mapping |
 | `fema-shelters` | FEMA/ARC Open Shelters ArcGIS FeatureServer query (f=geojson) | B | Data syncs daily — set honest `last_verified_at` from attributes, not fetch time; endpoint may be empty/unreachable: return `ok:true, items:[]` on empty, `ok:false` on error |
-| `demo` | Local fixtures | A–E mixed | The deterministic California wildfire scenario (§8). Enabled by `DEMO_MODE=1` (default in dev) |
+| `demo` | Local fixtures | A–E mixed | The deterministic California wildfire scenario (§8). Enabled by `DEMO_MODE=1`, which `npm run dev:api` sets; off otherwise |
 
 Also export `normalize` helpers: dedup key (`event_type` + geometry hash + time-window
 overlap), and `mergeEvents` that increments `source_count` and retains **all** source
@@ -121,12 +121,12 @@ GET /v1/stream                         → SSE: `event: feed_update`, data: Cano
 CORS open for localhost. Port/env via `PORT`, `DEMO_MODE`, `ANTHROPIC_API_KEY`
 (optional).
 
-**Route-risk engine (`packages/agent-tools/src/router.ts`):** bounded demo road graph (~30–60 nodes on a
+**Route-risk engine (`packages/agent-tools/src/router.ts`):** bounded demo road graph (20 nodes on a
 real street lattice around the Avenues in Chico, CA, hand-authored in
 `data/demo-graph.ts`), k-shortest-paths (k≤4) via Dijkstra + penalty rerun;
 segment vs hazard-geometry intersection (point-in-polygon + segment-buffer distance);
-**eliminate** candidates crossing `road_closure`/`evacuation_order` geometries; score
-survivors `travel + hazard_exposure + closure_penalty + stale_data_penalty`; recommend
+**eliminate** candidates crossing `road_closure`/`evacuation_order` geometries or a
+severe fire/flood/landslide area; score `travel_min + hazard_exposure_m/100 + 5 if stale`; recommend
 lowest. Response language must be "lowest-risk route currently available", never
 "safe". Label: `"routing": "demonstration"` field in every route response. The graph
 data lives in `packages/agent-tools/src/data/demo-graph.ts`.
