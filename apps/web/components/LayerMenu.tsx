@@ -84,12 +84,12 @@ export function LayerMenu({
                   onChange={() => onChange({ ...layers, basemap: kind })}
                   className="h-5 w-5 accent-hl-teal"
                 />
-                {kind === "streets" ? "Streets" : "Satellite imagery (not live)"}
+                {kind === "streets" ? "Streets" : "Satellite and aerial imagery (not live)"}
               </label>
             ))}
             {layers.basemap === "satellite" ? (
               <label className="mt-1 flex flex-col gap-1 text-meta text-hl-muted">
-                Imagery date (UTC)
+                Daily satellite image date (UTC). Zoom out to see it. Close in, the map shows aerial photos that are not current.
                 <input
                   type="date"
                   value={layers.satelliteDate}

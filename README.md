@@ -74,7 +74,7 @@ flowchart LR
 The web app at `apps/web` has four views. On a desktop the map stays on the right and a rail on the left switches between the other three. On a phone a bottom bar switches between all four.
 
 - **Now** shows the most urgent alert, the nearest open shelter with a **Route here** button, and tiles for alerts, fire, air quality, river level and power. Each value shows its source and age. A tile that has no data says so; it never shows a calm reading in place of missing data.
-- **Map** shows streets, hazard areas, shelters, closures, the route and unconfirmed satellite heat footprints. The **Layers** menu switches to NASA GIBS satellite imagery for a chosen day (not live) and turns layers on and off.
+- **Map** shows streets, hazard areas, shelters, closures, the route and unconfirmed satellite heat footprints. The **Layers** menu switches to imagery (not live) and turns layers on and off. From zoom 9 the imagery is USGS aerial photos (about 1 m per pixel, United States only, months to years old). Below zoom 9 it is the NASA GIBS daily satellite image for a chosen day (250 m per pixel), which shows smoke and cloud.
 - **Alerts** lists active alerts with filters (All, Official, Within 3 km, Weather) and opens each one with its instructions and sources.
 - **Ask** sends a question to the assistant. When the answer names a shelter, **Route to** draws the route that came with the answer.
 
@@ -153,7 +153,7 @@ CI (`.github/workflows/ci.yml`) runs `npm ci`, build, check, test and the scorec
 
 ## Built with
 
-TypeScript end to end: Next.js 16, React 19, Tailwind 4, MapLibre GL, TanStack Query, Hono, Zod 4, Vitest. Basemap © OpenFreeMap, © OpenMapTiles, © OpenStreetMap contributors; satellite imagery from NASA GIBS. Alert data © NOAA/NWS, USGS, and FEMA/American Red Cross; fire data from NASA FIRMS and NIFC; air quality from AirNow (EPA and partner agencies); river and smoke data from NOAA. Each is retained with its source record. Designed around Sentient's open-source GRID ecosystem (ROMA, OpenDeepSearch) via the adapter boundary in `packages/agent-tools`.
+TypeScript end to end: Next.js 16, React 19, Tailwind 4, MapLibre GL, TanStack Query, Hono, Zod 4, Vitest. Basemap © OpenFreeMap, © OpenMapTiles, © OpenStreetMap contributors; daily satellite imagery from NASA GIBS; aerial photos from USGS The National Map and USDA. Alert data © NOAA/NWS, USGS, and FEMA/American Red Cross; fire data from NASA FIRMS and NIFC; air quality from AirNow (EPA and partner agencies); river and smoke data from NOAA. Each is retained with its source record. Designed around Sentient's open-source GRID ecosystem (ROMA, OpenDeepSearch) via the adapter boundary in `packages/agent-tools`.
 
 ## License
 

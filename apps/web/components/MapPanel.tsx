@@ -39,6 +39,7 @@ import {
   defaultLayers,
   installOverlayLayers,
   installSatellite,
+  SATELLITE_SPLIT_ZOOM,
   loadBasemapStyle,
   setSourceData,
   type LayerState,
@@ -266,6 +267,8 @@ export function MapPanel() {
   const [mapError, setMapError] = useState<string | null>(null);
   const [basemapProblem, setBasemapProblem] = useState<string | null>(null);
   const [layers, setLayers] = useState<LayerState>(defaultLayers);
+  // Which imagery layer is on screen: aerial photos from the split zoom.
+  const [aerialZoom, setAerialZoom] = useState(true);
 
   const feed = useLiveFeed({ lat: user.lat, lon: user.lon });
   const events = feed.events;
@@ -337,6 +340,10 @@ export function MapPanel() {
       resizeObserver.observe(container);
 
       map.addControl(new gl.NavigationControl({ showCompass: false }), "top-right");
+      const activeMap = map;
+      const syncImageryZoom = () => setAerialZoom(activeMap.getZoom() >= SATELLITE_SPLIT_ZOOM);
+      map.on("zoom", syncImageryZoom);
+      syncImageryZoom();
       map.getCanvas().setAttribute("aria-label", "Map of hazards and places. Use the lists to reach each item.");
 
       // A tile that fails, or returns an error image the decoder rejects,
@@ -560,7 +567,9 @@ export function MapPanel() {
         ) : null}
         {layers.basemap === "satellite" ? (
           <p className="rounded-xl bg-hl-panel/95 px-3 py-2 text-meta text-white shadow-lg">
-            Satellite imagery {layers.satelliteDate} (UTC) · not live · NASA GIBS
+            {aerialZoom
+              ? "Aerial photos · months to years old, not current · USGS"
+              : `Satellite image ${layers.satelliteDate} (UTC) · not live · NASA GIBS`}
           </p>
         ) : null}
         {user.approximate ? (

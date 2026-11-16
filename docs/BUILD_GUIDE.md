@@ -189,8 +189,8 @@ Views:
    Power reads "Not monitored" because no source is configured.
 2. **Map** — MapLibre GL over the keyless OpenFreeMap dark vector style
    (contrast raised in `lib/mapLayers.ts`; attribution from the style). A
-   **Layers** menu switches to NASA GIBS MODIS true-colour imagery for a chosen
-   day and toggles hazards, fire detections, closures, shelters, medical and
+   **Layers** menu switches to imagery (USGS aerial photos from zoom 9, the NASA GIBS
+   MODIS daily image for a chosen day below zoom 9) and toggles hazards, fire detections, closures, shelters, medical and
    food & water. Satellite heat detections draw as unconfirmed footprints shaded
    by age. Clicking a marker opens a place card. A route goes only to the shelter
    the user chose or the answer named; the route bar uses "lowest-risk" wording,

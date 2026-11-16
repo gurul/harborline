@@ -1,8 +1,8 @@
 /**
  * Map sources and layers, and the basemap choice.
  *
- * Draw order, bottom to top: basemap, satellite imagery (when on), basemap
- * labels, hazard areas, fire-detection footprints, road closures, the route,
+ * Draw order, bottom to top: basemap, satellite imagery (when on: the daily
+ * image below zoom 9, aerial photos from zoom 9), basemap labels, hazard areas, fire-detection footprints, road closures, the route,
  * event points, resource points, icon chips. Fire detections sit below the
  * event points so they never hide an alert.
  */
@@ -77,11 +77,29 @@ export async function loadBasemapStyle(): Promise<StyleSpecification | null> {
   }
 }
 
-// --- Satellite (NASA GIBS) ----------------------------------------------------
+// --- Satellite imagery --------------------------------------------------------
+
+/**
+ * Two layers share the "satellite" choice, split at this zoom.
+ * Below it: the NASA daily image (250 m per pixel, dated, shows smoke).
+ * From it: USGS aerial photos (about 1 m per pixel, months to years old).
+ * The daily image is too coarse for streets, so it never draws close in.
+ */
+export const SATELLITE_SPLIT_ZOOM = 9;
+
+/**
+ * USGS The National Map orthoimagery (mostly USDA NAIP). United States only.
+ * No key, public domain. The cache has tiles to zoom 16.
+ */
+export const AERIAL_TILE_URL =
+  "https://basemap.nationalmap.gov/arcgis/rest/services/USGSImageryOnly/MapServer/tile/{z}/{y}/{x}";
+export const AERIAL_MAX_ZOOM = 16;
+export const AERIAL_ATTRIBUTION =
+  'Aerial photos: <a href="https://www.usgs.gov/programs/national-geospatial-program/national-map" target="_blank" rel="noreferrer">USGS The National Map</a>, USDA';
 
 /**
  * NASA GIBS true-colour imagery, daily mosaic. No key; NASA asks for credit.
- * The best zoom level is 9: closer in, the image is upscaled.
+ * The best zoom level is 9, which is why it draws only below the split.
  */
 export const GIBS_LAYER = "MODIS_Terra_CorrectedReflectance_TrueColor";
 
@@ -108,10 +126,12 @@ export const SRC = {
   route: "hl-route",
   fire: "hl-fire-detections",
   satellite: "hl-satellite",
+  aerial: "hl-aerial",
 } as const;
 
 export const LYR = {
   satellite: "hl-satellite",
+  aerial: "hl-aerial",
   hazardFill: "hl-hazard-fill",
   hazardCasing: "hl-hazard-casing",
   hazardOutline: "hl-hazard-outline",
@@ -187,8 +207,14 @@ export function setSourceData(map: MapLibreMap | null, sourceId: string, data: F
   source?.setData(data);
 }
 
-/** Add (or replace) the satellite source for a date, under the basemap labels. */
+/**
+ * Add (or replace) the two imagery layers under the basemap labels: the daily
+ * image for a date below the split zoom, aerial photos from the split zoom.
+ */
 export function installSatellite(map: MapLibreMap, date: string, visible: boolean): void {
+  const visibility = visible ? "visible" : "none";
+  const before = basemapLabelLayerId(map) ?? (map.getLayer(LYR.hazardFill) ? LYR.hazardFill : undefined);
+
   if (map.getLayer(LYR.satellite)) map.removeLayer(LYR.satellite);
   if (map.getSource(SRC.satellite)) map.removeSource(SRC.satellite);
   map.addSource(SRC.satellite, {
@@ -198,16 +224,39 @@ export function installSatellite(map: MapLibreMap, date: string, visible: boolea
     maxzoom: 9,
     attribution: GIBS_ATTRIBUTION,
   });
-  const before = basemapLabelLayerId(map) ?? (map.getLayer(LYR.hazardFill) ? LYR.hazardFill : undefined);
   map.addLayer(
     {
       id: LYR.satellite,
       type: "raster",
       source: SRC.satellite,
-      layout: { visibility: visible ? "visible" : "none" },
+      maxzoom: SATELLITE_SPLIT_ZOOM,
+      layout: { visibility },
     },
     before,
   );
+
+  // The aerial photos do not depend on the date: add them once.
+  if (!map.getSource(SRC.aerial)) {
+    map.addSource(SRC.aerial, {
+      type: "raster",
+      tiles: [AERIAL_TILE_URL],
+      tileSize: 256,
+      maxzoom: AERIAL_MAX_ZOOM,
+      attribution: AERIAL_ATTRIBUTION,
+    });
+  }
+  if (!map.getLayer(LYR.aerial)) {
+    map.addLayer(
+      {
+        id: LYR.aerial,
+        type: "raster",
+        source: SRC.aerial,
+        minzoom: SATELLITE_SPLIT_ZOOM,
+        layout: { visibility },
+      },
+      before,
+    );
+  }
 }
 
 export function installOverlayLayers(map: MapLibreMap): void {
@@ -373,6 +422,7 @@ export function applyLayerVisibility(map: MapLibreMap, layers: LayerState): void
   set(LYR.fireFill, layers.fire);
   set(LYR.fireOutline, layers.fire);
   set(LYR.satellite, layers.basemap === "satellite");
+  set(LYR.aerial, layers.basemap === "satellite");
 
   const types = [
     ...(layers.shelters ? RESOURCE_GROUPS.shelters : []),
