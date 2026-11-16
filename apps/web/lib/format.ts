@@ -60,17 +60,17 @@ export const CONFIDENCE_CLASS: Record<ConfidenceLabel, string> = {
 };
 
 export const SEVERITY_COLOR: Record<Severity, string> = {
-  extreme: "#dc2626",
+  extreme: "#ef4444",
   severe: "#ef4444",
   moderate: "#f5a524",
   minor: "#fbbf24",
 };
 
 export const SEVERITY_TEXT_CLASS: Record<Severity, string> = {
-  extreme: "text-hl-red",
-  severe: "text-hl-red",
-  moderate: "text-hl-amber",
-  minor: "text-hl-amber",
+  extreme: "text-hl-extreme",
+  severe: "text-hl-severe",
+  moderate: "text-hl-moderate",
+  minor: "text-hl-minor",
 };
 
 export const EVENT_TYPE_LABEL: Record<EventType, string> = {
@@ -85,6 +85,8 @@ export const EVENT_TYPE_LABEL: Record<EventType, string> = {
   transit_disruption: "Transit",
   evacuation_order: "Evacuation order",
   weather_warning: "Weather warning",
+  fire_detection: "Satellite heat detection",
+  fire_perimeter: "Wildfire perimeter",
 };
 
 export const RESOURCE_STATUS_TEXT: Record<OperationalStatus, string> = {
@@ -118,4 +120,131 @@ export const REJECTED_REASON_TEXT: Record<string, string> = {
 export function humanizeRejection(reason: string | null | undefined): string | null {
   if (!reason) return null;
   return REJECTED_REASON_TEXT[reason] ?? reason.replace(/_/g, " ");
+}
+
+// --- Tones: the only colour on data -----------------------------------------
+
+/**
+ * Colour roles. Severity tones colour hazards; `ok` marks an open place or a
+ * good reading; `action` marks the recommended action and the route; `info`
+ * marks an official source. `neutral` is every unknown, stale or missing value.
+ */
+export type Tone =
+  | "extreme"
+  | "severe"
+  | "moderate"
+  | "minor"
+  | "ok"
+  | "neutral"
+  | "action"
+  | "info";
+
+export const TONE_TEXT_CLASS: Record<Tone, string> = {
+  extreme: "text-hl-extreme",
+  severe: "text-hl-severe",
+  moderate: "text-hl-moderate",
+  minor: "text-hl-minor",
+  ok: "text-hl-ok",
+  neutral: "text-hl-muted",
+  action: "text-hl-action",
+  info: "text-hl-info",
+};
+
+/** Solid colour for a severity bar or dot. */
+export const TONE_BAR_CLASS: Record<Tone, string> = {
+  extreme: "bg-hl-red",
+  severe: "bg-hl-red",
+  moderate: "bg-hl-amber",
+  minor: "bg-hl-minor",
+  ok: "bg-hl-green",
+  neutral: "bg-hl-control-edge",
+  action: "bg-hl-teal",
+  info: "bg-hl-blue",
+};
+
+export const SEVERITY_TONE: Record<Severity, Tone> = {
+  extreme: "extreme",
+  severe: "severe",
+  moderate: "moderate",
+  minor: "minor",
+};
+
+export const SEVERITY_WORD: Record<Severity, string> = {
+  extreme: "Extreme",
+  severe: "Severe",
+  moderate: "Moderate",
+  minor: "Minor",
+};
+
+/** Event type label with a readable fallback for types newer than this build. */
+export function eventTypeLabel(type: string): string {
+  const known = (EVENT_TYPE_LABEL as Record<string, string | undefined>)[type];
+  if (known) return known;
+  const words = type.replace(/_/g, " ");
+  return words.charAt(0).toUpperCase() + words.slice(1);
+}
+
+/** Accessibility slugs from resource feeds, in words. */
+export const FEATURE_TEXT: Record<string, string> = {
+  wheelchair_accessible: "Wheelchair access",
+  accessible_restrooms: "Accessible restrooms",
+  step_free: "Step-free entrance",
+  step_free_access: "Step-free entrance",
+  accessible_parking: "Accessible parking",
+  medical_power: "Power for medical equipment",
+  backup_power: "Backup power",
+  service_animals: "Service animals allowed",
+  hearing_loop: "Hearing loop",
+  asl_interpretation: "Sign-language interpretation",
+};
+
+export function featureText(slug: string): string {
+  const known = FEATURE_TEXT[slug];
+  if (known) return known;
+  const words = slug.replace(/[_-]+/g, " ").trim();
+  return words.charAt(0).toUpperCase() + words.slice(1);
+}
+
+/** Local clock time, "14:02". */
+export function formatClock(value: string | number | Date): string {
+  const date = new Date(value);
+  if (Number.isNaN(date.getTime())) return "unknown time";
+  return date.toLocaleTimeString([], { hour: "2-digit", minute: "2-digit" });
+}
+
+const COMPASS = ["north", "north-east", "east", "south-east", "south", "south-west", "west", "north-west"];
+
+/** Compass direction from `from` to `to`, both [lon, lat]. */
+export function compassDirection(from: [number, number], to: [number, number]): string {
+  const toRad = (d: number) => (d * Math.PI) / 180;
+  const [lon1, lat1] = from;
+  const [lon2, lat2] = to;
+  const y = Math.sin(toRad(lon2 - lon1)) * Math.cos(toRad(lat2));
+  const x =
+    Math.cos(toRad(lat1)) * Math.sin(toRad(lat2)) -
+    Math.sin(toRad(lat1)) * Math.cos(toRad(lat2)) * Math.cos(toRad(lon2 - lon1));
+  const bearing = ((Math.atan2(y, x) * 180) / Math.PI + 360) % 360;
+  return COMPASS[Math.round(bearing / 45) % 8] ?? "nearby";
+}
+
+/** First sentence of a block of text, for one-line summaries. */
+export function firstSentence(text: string | null | undefined): string | null {
+  if (!text) return null;
+  const trimmed = text.trim();
+  const match = /^(.+?[.!?])(\s|$)/.exec(trimmed);
+  return (match?.[1] ?? trimmed).slice(0, 220);
+}
+
+/** Source line for one record: "Official · tier A · 5 min ago". */
+export function provenanceLine(
+  parts: { provider?: string | null; tier?: string | null; at?: string | null; ageLabel?: string | null },
+  now: Date,
+): string {
+  const out: string[] = [];
+  if (parts.provider) out.push(parts.provider);
+  if (parts.tier) out.push(`tier ${parts.tier}`);
+  if (parts.at) out.push(formatAge(parts.at, now));
+  else if (parts.ageLabel) out.push(parts.ageLabel);
+  else out.push("age not reported");
+  return out.join(" · ");
 }

@@ -45,7 +45,28 @@ export const GUARANTEE_PATTERNS: RegExp[] = [
   /\bdon'?t (need to )?worry\b/i,
   /\bclear and passable\b/i,
   /\bwon'?t (be )?(affect|reach|spread)/i,
+  // Air: no reading supports a safety promise about breathing.
+  /\b(air|it)\s+(is|quality is)\s+(completely |totally |perfectly )?safe\b/i,
+  /\bsafe to (breathe|go outside|be outside)\b/i,
 ];
+
+/**
+ * Rule 8 — a claim that there is no fire. A satellite or agency feed can only
+ * fail to report a fire; it cannot show its absence. The one allowed form is
+ * a statement that a missing detection is NOT proof ("... is not proof of no
+ * fire").
+ */
+const NO_FIRE_CLAIM =
+  /\b(there (is|are) )?no (active |current |nearby )?(wild)?fires?\b|\bfire[- ]free\b|\bno fire (danger|risk|threat)\b/gi;
+const NOT_PROOF_BEFORE = /\bnot (proof|evidence)( of| that)?[^.]{0,30}$/i;
+
+/** Rule 9 — AQI numbers and categories must match the evidence. */
+const AQI_NUMBER = /\bAQI\D{0,12}?(\d{1,3})\b|\b(\d{1,3})\s*AQI\b/gi;
+const AQI_CATEGORY_CLAIM =
+  /\b(air quality|aqi|category)\b[^.\n]{0,40}?\b(unhealthy for sensitive groups|very unhealthy|unhealthy|hazardous|moderate|good)\b/gi;
+/** Rule 10 — a present-tense air-quality state. Invalid when the reading is stale or absent. */
+const PRESENT_AIR_CLAIM =
+  /\b(air( quality)?|aqi)\s+(is|remains|stays)\s+(currently\s+|now\s+)?(in the\s+)?(good|moderate|unhealthy|very unhealthy|hazardous|clean|fine|ok|okay|healthy)\b/i;
 
 /** Rule 1 — words that assert something about the physical world. */
 const OPERATIONAL_CLAIM = /\b(open|closed|blocked|full|capacity|operating)\b/gi;
@@ -240,6 +261,47 @@ export function validateResponse(
         "missing_protective_action: a severe or extreme hazard is active in evidence but the answer carries no recommended action",
       );
     }
+  }
+
+  // --- Rule 8: no "no fire" claims ---------------------------------------
+  for (const match of text.matchAll(NO_FIRE_CLAIM)) {
+    const before = text.slice(Math.max(0, (match.index ?? 0) - 60), match.index ?? 0);
+    if (NOT_PROOF_BEFORE.test(before)) continue;
+    violations.push(
+      `no_fire_claim: answer says "${match[0]}"; no feed can show the absence of a fire`,
+    );
+  }
+
+  // --- Rule 9: AQI numbers and categories must match the evidence ----------
+  // Model path only: the deterministic composer copies the AQI from the
+  // reading, and it quotes upstream alert text that can carry other numbers.
+  const aq = evidence.environment?.air_quality;
+  const checkAqi = response.composed_by === "llm";
+  for (const match of checkAqi ? text.matchAll(AQI_NUMBER) : []) {
+    const value = Number(match[1] ?? match[2]);
+    if (!aq || aq.aqi === undefined || aq.aqi !== value) {
+      violations.push(
+        `aqi_mismatch: answer states AQI ${value} but the evidence ${aq?.aqi === undefined ? "has no AQI reading" : `reads ${aq.aqi}`}`,
+      );
+    }
+  }
+  for (const match of checkAqi ? text.matchAll(AQI_CATEGORY_CLAIM) : []) {
+    const stated = match[2]!.toLowerCase();
+    if (!aq?.category || aq.category.toLowerCase() !== stated) {
+      violations.push(
+        `aqi_category_mismatch: answer states "${match[2]}" but the evidence ${aq?.category ? `reads "${aq.category}"` : "has no air-quality category"}`,
+      );
+    }
+  }
+
+  // --- Rule 10: a stale or missing reading is not stated as current --------
+  // Applies to model text, and to any answer built for an air or fire
+  // question (those carry the environment summary).
+  const checkAir = response.composed_by === "llm" || evidence.environment !== undefined;
+  if (checkAir && PRESENT_AIR_CLAIM.test(text) && aq?.status !== "ok") {
+    violations.push(
+      "stale_claim_as_current: answer states current air quality but no fresh reading is in evidence",
+    );
   }
 
   // --- Rule 6: LLM-stated entities must be grounded in the bundle -----------

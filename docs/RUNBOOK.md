@@ -45,9 +45,10 @@ Open **<http://localhost:3000>**.
 **Step 1 — the map and feed load the seeded state.**
 
 The map shows the east-Chico fire polygon (severe, red), two Chico Public Works road closures, and
-three shelter markers with distinct open / full / stale treatments. The live feed pins the
-**CAL FIRE evacuation warning** at the top with an amber accent: ranking is severity descending, then
-freshness, and the tier A `severe` warning wins both.
+three shelter markers with distinct open / full / stale treatments. The banner under the header
+shows the **CAL FIRE evacuation warning** on a red background: ranking is severity descending, then
+urgency, then distance, and the tier A `severe` warning wins. The **Now** view shows Neighborhood
+Church as the nearest open shelter, and the **Alerts** view lists all four alerts.
 
 Check the same thing from the API:
 
@@ -64,7 +65,7 @@ closure still stands and still eliminates routes.
 
 **Step 2 — ask for the nearest open shelter.**
 
-In the assistant panel use the suggested prompt **"Where is the nearest open shelter?"**, or:
+Open the **Ask** view and choose the prompt **"Where is the nearest open shelter?"**, or:
 
 ```bash
 curl -s -X POST http://localhost:8787/v1/assistant/ask \
@@ -104,9 +105,9 @@ curl -s "http://localhost:8787/v1/routes?from_lat=39.7398&from_lon=-121.8432&to_
 
 Assert four things: a non-null recommendation naming Neighborhood Church; a `summary` using
 **"lowest-risk … currently available"** and never the word "safe"; `evidence_event_ids`
-listing the hazards actually considered; and `"routing": "demonstration"`. In the UI the
-bottom map bar reads *"Lowest-risk route to nearest open shelter — 8 min · avoids 2
-hazards"* and the route draws as a teal line.
+listing the hazards actually considered; and `"routing": "demonstration"`. In the UI, press
+**Route here** on the Now view (or **Route to** on the answer). The route bar on the map
+names the shelter, the minutes and the hazards avoided, and the route draws as a teal line.
 
 **Step 5 — the validator holds.**
 
@@ -235,8 +236,11 @@ export const mySourceConnector: Connector = {
 };
 ```
 
-**2. Export it** from `connectors/src/index.ts` and add it to the connector list the API
-scheduler iterates in `services/api/src/scheduler.ts`.
+**2. Export it** from `connectors/src/index.ts` and add it to the list `allConnectors()`
+returns in the same file. The API scheduler polls every connector in that list; nothing in
+`services/api/src/scheduler.ts` needs to change. If the feed is often empty (fire feeds,
+smoke), set `zero_rows_expected: true` so an empty poll is not read as a silent channel. A
+point reading (air quality, gauge) goes in `observations`, not `events`.
 
 **3. Add an eval** in `evals/` covering: a well-formed payload maps to the expected
 canonical events; a malformed payload returns `ok: false` rather than throwing; and fetching
@@ -257,9 +261,24 @@ Five rules that are not optional:
 5. **Empty is not an error.** An upstream returning zero features is `ok: true` with empty
    arrays. Reserve `ok: false` for genuine failure, or the breaker will trip on quiet days.
 
+CSV feeds (FIRMS) get the same treatment as JSON: check that every required header column
+is present, return `ok: false` for an HTML error page or a missing column, and treat a
+header with no rows as `ok: true` with zero records. Use `fetchText` from
+`connectors/src/util.ts` for text bodies: it applies the timeout, refuses redirects, caps
+the body size, and sends the generic User-Agent `harborline-feed/1.0`. Record one real
+response per feed in `evals/src/fixtures/` and normalize from it in the eval.
+
 Set `expected_refresh_seconds` no faster than the upstream's own publish cadence. Polling a
 feed that updates daily every 60 seconds is 1,439 wasted requests and a good way to get
 rate-limited.
+
+### Checking the live feeds
+
+`npm run -s smoke:live` (after `npm run build:libs`) fetches each fire, air, gauge and smoke
+connector once and prints one line per connector: `ok` or `FAIL`, the record count and the
+age of the newest record. It prints `LIVE_SMOKE_OK` only when every connector returns ok,
+and exits 1 otherwise. Zero records with `ok` passes: a quiet fire day is normal. It makes
+real network calls, so CI does not run it.
 
 ---
 
@@ -367,6 +386,24 @@ will not tell you when something changes unless the page is open. There is no of
 for low-bandwidth conditions, and there is no path for the public to submit reports. All
 three are deferred deliberately — unreviewed community input is the fastest way to poison a
 trust layer. See [ROADMAP.md](./ROADMAP.md).
+
+**Satellite detections are unconfirmed and incomplete.** VIIRS on NOAA-20 and NOAA-21
+passes a location a few times a day. A detection can be a gas flare or hot ground, and cloud
+or thick smoke hides a fire. Harborline never says there is no fire, never eliminates a
+route on a detection, and states each detection's age. Treat a quiet satellite feed as
+missing information, not as an all-clear.
+
+**Feed terms and rate limits are not confirmed.** The FIRMS area files, NOAA NWPS and the
+ArcGIS-hosted layers (WFIGS, HMS smoke) publish no rate limit we could confirm, and their
+terms of use for automated polling were not confirmed either. The connectors therefore poll
+slowly (gauges every 15 min, the rest every 30 min). Confirm the terms before a
+public deployment, and slow the polls further if a provider asks.
+
+**Air quality is per reporting area.** The AirNow reporting-area file gives the agency AQI
+for an area, not for an address. It updates hourly; a reading over 2 h old is stale.
+
+**Power outages are not monitored.** No outage source is configured. The environment
+summary says so instead of reporting "no outage".
 
 **No linter.** The MVP configures `tsc --noEmit` (`npm run check`) and Vitest (`npm test`)
 and nothing else. Biome is a roadmap item. Type errors are caught; style drift is not.

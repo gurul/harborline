@@ -27,6 +27,7 @@ import {
   isStale,
   resourceMaxAge,
 } from "@harborline/event-schema";
+import { makeSourceRecord } from "@harborline/connectors";
 import {
   DEMO_USER_LOCATION,
   NOW,
@@ -148,6 +149,58 @@ describe("store — resources age out and are capped", () => {
     const farFuture = new Date(NOW.getTime() + 5 * resourceMaxAge("shelter") * 1000);
     store.sweepExpired(farFuture);
     expect(store.allResources().length).toBe(0);
+  });
+});
+
+describe("store — retention is measured from the last time a feed returned the record", () => {
+  // A perimeter drawn 5 days ago (past 4 x its 24 h budget by data time).
+  const drawnAt = new Date(NOW.getTime() - 5 * 24 * 3600_000).toISOString();
+  const perimeter = (): CanonicalEvent => ({
+    ...evacuationOrderEvent(NOW),
+    event_id: "retention-perimeter",
+    event_type: "fire_perimeter",
+    severity: "moderate",
+    urgency: "unknown",
+    best_tier: "B",
+    last_verified_at: drawnAt,
+    starts_at: drawnAt,
+  });
+  const record = (retrievedAt: Date) =>
+    makeSourceRecord({
+      source_record_id: "retention-perimeter-record",
+      event_id: "retention-perimeter",
+      provider: "NIFC WFIGS",
+      provider_record_id: null,
+      provider_tier: "B",
+      source_url: null,
+      published_at: drawnAt,
+      retrieved_at: retrievedAt.toISOString(),
+      hash_input: "retention-perimeter",
+    });
+
+  it("keeps a record the feed returned 10 min ago, however old its data time", () => {
+    const store = new MemoryStore();
+    store.upsertEvent(perimeter(), [record(new Date(NOW.getTime() - 10 * 60_000))]);
+    store.sweepExpired(NOW);
+    expect(store.getEvent("retention-perimeter")).not.toBeNull();
+  });
+
+  it("deletes it once the last retrieval is past 4 x the budget", () => {
+    const store = new MemoryStore();
+    store.upsertEvent(perimeter(), [record(new Date(NOW.getTime() - 97 * 3600_000))]);
+    store.sweepExpired(NOW);
+    expect(store.getEvent("retention-perimeter")).toBeNull();
+  });
+
+  it("does not re-notify subscribers when a poll returns the same record again", () => {
+    const store = new MemoryStore();
+    let emitted = 0;
+    store.onChange(() => { emitted += 1; });
+    store.upsertEvent(perimeter(), [record(new Date(NOW.getTime() - 20 * 60_000))]);
+    store.upsertEvent(perimeter(), [record(new Date(NOW.getTime() - 10 * 60_000))]);
+    expect(emitted).toBe(1);
+    store.upsertEvent({ ...perimeter(), severity: "severe" }, [record(NOW)]);
+    expect(emitted).toBe(2);
   });
 });
 

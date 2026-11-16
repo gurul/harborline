@@ -114,3 +114,20 @@ describe("get_resource_status — staleness is reported, not hidden", () => {
     expect(status!.age_label).toBe("8 min ago");
   });
 });
+
+describe("fire feed budgets", () => {
+  it("gives satellite detections 6 h and perimeters 24 h", () => {
+    expect(FRESHNESS_POLICY.events.fire_detection).toBe(6 * 3600);
+    expect(FRESHNESS_POLICY.events.fire_perimeter).toBe(24 * 3600);
+  });
+
+  it("keeps the official fire budget at 1 h (the replay's criterion 8 needs it)", () => {
+    expect(FRESHNESS_POLICY.events.fire).toBe(3600);
+  });
+
+  it("treats a 5 h old detection as fresh and a 7 h old one as stale", () => {
+    const budget = FRESHNESS_POLICY.events.fire_detection;
+    expect(isStale(agedIso(5 * 60), budget, NOW)).toBe(false);
+    expect(isStale(agedIso(7 * 60), budget, NOW)).toBe(true);
+  });
+});

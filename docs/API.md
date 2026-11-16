@@ -36,6 +36,7 @@ Conventions that hold for every endpoint:
 | `GET` | `/v1/resources` | Nearby resources with `distance_m` |
 | `GET` | `/v1/resources/:id` | One resource plus provenance and its freshness verdict |
 | `GET` | `/v1/routes` | Route candidates and a recommendation |
+| `GET` | `/v1/environment` | Air quality, river gauge, fire and power summary at a point |
 | `POST` | `/v1/assistant/ask` | An `AssistantResponse` |
 | `GET` | `/v1/stream` | Server-Sent Events on every store upsert |
 
@@ -125,6 +126,8 @@ curl -s http://localhost:8787/v1/health | jq
 }
 ```
 
+Each source also carries `last_success_records` (`events`, `resources`, and `observations` for air, gauge and smoke feeds) and `zero_rows_expected`. `zero_rows_expected: true` marks a feed where an empty successful poll is normal (FIRMS, WFIGS, HMS smoke): a zero count there is not a silent-channel failure.
+
 `status` is `"ok"` when at least one source is healthy and `"degraded"` when every source
 has an open circuit. The service does not return `"down"` — if it cannot answer, it is not
 answering. The presence of a healthy `demo` source is how you confirm `DEMO_MODE=1` took
@@ -143,6 +146,12 @@ verified first).
 | `lon` | number `-180..180` | no | none | Query center longitude |
 | `radius_m` | number `> 0` | no | `5000` | Radius in meters; applies only when a center is given |
 | `types` | comma-separated `EventType` | no | all types | e.g. `fire,road_closure` |
+| `exclude_types` | comma-separated `EventType` | no | none | Types to leave out, applied before `limit`. Use `exclude_types=fire_detection` when satellite detections would fill the limit and push closures and orders out of the list |
+
+Event types added for wildfire (2026-11-16):
+
+- `fire_detection`: a cluster of NASA FIRMS VIIRS satellite heat detections (tier C, 6 h freshness budget, `ends_at` = newest detection + 24 h). Unconfirmed: it never eliminates a route, adds a fixed route penalty, and rejects a shelter only when severe (seen on two passes).
+- `fire_perimeter`: a NIFC WFIGS perimeter, or an incident point when no perimeter is mapped (tier B, 24 h budget). Severe when under 50 percent contained or when containment is not reported; a severe perimeter polygon eliminates a crossing route. A point never eliminates.
 
 ```bash
 curl -s "http://localhost:8787/v1/events?lat=39.7398&lon=-121.8432&radius_m=3000&types=fire,road_closure" | jq
@@ -582,6 +591,54 @@ never fall back to the shortest path.
 
 ---
 
+## `GET /v1/environment`
+
+A summary of conditions at a point: the nearest air-quality reading, the nearest river
+gauge, nearby fire records, and power. Every value carries its provider, tier, verification
+time and age.
+
+| Parameter | Type | Required | Default | Notes |
+|---|---|---|---|---|
+| `lat` | number `-90..90` | yes | none | Latitude |
+| `lon` | number `-180..180` | yes | none | Longitude |
+| `radius_m` | number `> 0`, max `200000` | no | `25000` | Search radius in meters |
+
+```bash
+curl -s "http://localhost:8787/v1/environment?lat=39.7398&lon=-121.8432" | jq
+```
+
+**Response `200`**
+
+```ts
+{ generated_at: string,
+  air_quality: { status: "ok"|"stale"|"no_data", aqi?, category?, pollutant?, name?, distance_m?, provider?, provider_tier?, source_url?, last_verified_at?, age_label? },
+  stream_gauge: { status: "ok"|"stale"|"no_data", name?, site_id?, stage_ft?, flood_category?: "no_flooding"|"action"|"minor"|"moderate"|"major"|"unknown", forecast_category?, distance_m?, provider?, provider_tier?, source_url?, last_verified_at?, age_label? },
+  fire: { status: "ok"|"no_data", detections: number, nearest_distance_m?, newest_observed_at?, newest_age_label?, perimeters: number, nearest_perimeter_name?, confirmed: boolean, note: string },
+  power: { status: "not_monitored"|"outage_reported", note: string },
+  sources: AssistantSource[] }
+```
+
+- **Air quality and gauge.** The nearest reading inside its freshness budget (2 h) has
+  status `ok`. When no reading is fresh, the nearest stale one is returned with status
+  `stale` and its age. `no_data` means nothing within the radius. Air readings come from the
+  AirNow reporting-area file (agency-computed AQI per reporting area, not your exact
+  location). Gauges come from NOAA NWPS; `flood_category` is the official NWS category, and
+  any value the service cannot rate (`not_defined`, `obs_not_current`) is `unknown`, never
+  `no_flooding`.
+- **Fire.** `detections` counts satellite detection clusters, not pixels. `perimeters` counts
+  WFIGS perimeters and incident points. `confirmed` is true when a fire agency record (a
+  perimeter, an incident, or a `fire` alert) is within the radius. `status` is `no_data`
+  when no fire connector (`firms-viirs`, `nifc-wfigs`) has a current successful fetch. With a
+  healthy feed and nothing nearby it is `ok` with `detections: 0`, and the `note` says that
+  no satellite detection is not proof of no fire.
+- **Power.** No power-outage source is configured. `status` is `not_monitored` unless a
+  `power_outage` event covers the radius, and the note says the absence of a report does not
+  mean the power is on.
+- `400 invalid_query` names the field (`lat`, `lon` or `radius_m`) when it is missing or out
+  of range.
+
+---
+
 ## `POST /v1/assistant/ask`
 
 Runs the [assistant pipeline](./ARCHITECTURE.md#9-assistant-pipeline):
@@ -594,6 +651,20 @@ Runs the [assistant pipeline](./ARCHITECTURE.md#9-assistant-pipeline):
 | `question` | string, 1–500 chars | yes | Natural language |
 | `lat` | number `-90..90` | yes | User location latitude |
 | `lon` | number `-180..180` | yes | User location longitude |
+| `access_needs` | array of `"wheelchair"`, `"accessible_restroom"`, `"pets"` (max 3) | no | Shelter ranking only. Any other value is a `400` |
+| `destination_resource_id` | string | no | Route to this shelter. Makes the request a shelter request whatever the question says |
+
+`access_needs` holds exactly the needs a shelter record can decide: `wheelchair` and
+`accessible_restroom` from `accessibility_features`, `pets` from `pet_policy`. Ranking is
+deterministic: a shelter whose record contradicts a need ranks below one that does not;
+then more needs recorded as met; then distance. A record that says nothing about a need is
+neither credited nor excluded, and the answer says "not recorded" for it. Needs never reach
+a model prompt.
+
+`destination_resource_id` puts that shelter first when it passes the same gate as every
+other shelter (open, fresh, not inside a hazard area). When it fails, the answer says why
+("..., the shelter you selected, is excluded right now (...)") and names the best other
+shelter. An unknown id gets the same treatment ("not in the current records").
 
 ```bash
 curl -s -X POST http://localhost:8787/v1/assistant/ask \
@@ -624,9 +695,30 @@ curl -s -X POST http://localhost:8787/v1/assistant/ask \
   "freshness_note": "Shelter status verified 8 min ago. Shelter records are considered stale after 24 h and are then excluded from recommendations.",
   "uncertainty_note": "Shelter capacity changes faster than the feed updates. Bidwell Community Center was excluded because its status is 26 h old, not because it is closed.",
   "evidence_event_ids": ["calfire-fire-east-chico-20260802"],
-  "composed_by": "deterministic"
+  "composed_by": "deterministic",
+  "destination_resource_id": "demo-shelter-neighborhood-church",
+  "route": { "recommendation": { "route_id": "route_1", "destination_resource_id": "demo-shelter-neighborhood-church", "...": "..." }, "candidate": { "route_id": "route_1", "geometry": { "type": "LineString", "coordinates": [] }, "...": "..." } },
+  "access_needs_applied": []
 }
 ```
+
+**Route to the recommended shelter.** For a shelter answer, `destination_resource_id` is
+the shelter the answer and `recommended_action` name, and `route` is the recommended route
+to that same shelter (`route.recommendation.destination_resource_id` always equals it). Both
+come from the deterministic composer, also when a model wrote the text. `route` is `null`
+when no route survived; `destination_resource_id` is `null` when no shelter is
+recommendable. For other question types both are `null`. To see every candidate, including
+eliminated ones, call `GET /v1/routes?to_resource_id=<destination_resource_id>`.
+
+**Fire and air questions.** "Is there a fire near me?" (question type `fire_nearby`) lists
+official fire, perimeter and evacuation records within 25 km, then one line for satellite
+detections (count, nearest distance, newest age, "Unconfirmed by a fire agency"), any smoke
+analysis, and a fixed limits line. "How is the air quality?" (`air_quality`) gives the
+nearest AirNow reading with AQI, category, pollutant, age and provider, and the EPA action
+for that category; a stale reading is given with its age and "There is no current reading".
+"Should I stay home?" keeps its existing question type. The validator rejects any answer
+that says there is no fire or that the air is safe, a model-stated AQI number or category
+that differs from the reading, and current-tense air claims without a fresh reading.
 
 `composed_by` is `"deterministic"` when the template composer produced the text and
 `"llm"` when `llmCompose` did. **A rejected LLM answer is never returned** — the service
@@ -644,7 +736,11 @@ A long-lived SSE connection that emits on every store upsert. Content type is
 | Event name | `data` payload |
 |---|---|
 | `feed_update` | One `CanonicalEvent` (JSON) |
-| `resync` | `{"reason":"buffer_overflow"}` — the client fell too far behind and its backlog was dropped; refetch `GET /v1/events` |
+| `resync` | `{"reason":"buffer_overflow","refetch":"/v1/events"}` — the client fell too far behind and its backlog was dropped; refetch the path in `refetch` |
+
+The store emits only when an upsert changes something: a new event, new provenance, or
+changed content. A feed that returns the same records each poll (for example 50 satellite
+detections every 30 minutes) does not flood the stream.
 
 Keep-alive is an SSE **comment line** (`: heartbeat`), written every 25 s of
 write inactivity. Comments carry no event name and no data — `EventSource`

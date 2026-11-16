@@ -20,17 +20,19 @@ Built for the **Sentient Labs Hackathon (50 Selected Builders)**, where it won *
 
 ## What Harborline does
 
-1. **Ingest official sources.** Connectors poll NWS alerts, USGS earthquakes, and FEMA National Shelter System shelters on per-source schedules, with backoff, circuit breakers, and per-source health you can inspect at `/v1/health`. When a successful, non-empty poll no longer returns a record the same source returned before, that shelter is marked closed and that alert expired; an empty or failed poll changes nothing.
+1. **Ingest official sources.** Connectors poll NWS alerts, USGS earthquakes, FEMA National Shelter System shelters, NIFC WFIGS wildfire perimeters and incidents, NASA FIRMS VIIRS satellite heat detections (NOAA-20 and NOAA-21), AirNow air quality, NOAA NWPS river gauges and NOAA HMS smoke analyses. No feed needs a key. Each runs on its own schedule with backoff, circuit breakers, and per-source health you can inspect at `/v1/health`. When a successful, non-empty poll no longer returns a record the same source returned before, that shelter is marked closed and that alert expired; an empty or failed poll changes nothing.
 2. **Normalize everything into one event model.** Every record becomes a `CanonicalEvent` with CAP-style severity/urgency/certainty, GeoJSON geometry, and a `SourceRecord` trail. Repeat reports of the same event merge by id with the provenance trail intact; cross-provider dedup is built and eval-tested but not yet wired into ingest (see [docs/ROADMAP.md](./docs/ROADMAP.md)).
 3. **Score trust transparently.** Sources are tiered from A (issuing authority) down to E (unverified report). Internally, confidence is `authority × freshness × corroboration × precision × consistency`. Users only ever see one of four labels: `official / verified / developing / unverified`. There are no invented percentages.
 4. **Enforce freshness.** Every event and resource type has a maximum acceptable age. A shelter whose status is 26 hours old still appears, along with its age, but recommendations reject it with an explicit `stale_status` reason. Hazard records fail closed: a stale closure or fire is flagged with its age but still blocks routes and still excludes a shelter inside it.
-5. **Route around verified hazards.** Candidate routes are intersected with hazard geometry. Routes that cross a closure, an evacuation zone, or a fire, flood or landslide area of severity severe or higher are eliminated; if every alternative is cut, the search reruns with those roads removed before giving up. A user who starts inside an evacuation zone is routed out of it. The survivors are risk-scored, a kept route that still passes a lower-severity hazard says so, and the answer is phrased as "the lowest-risk route currently available" rather than "safe".
-6. **Answer questions from evidence only.** The assistant plans which tools to run, gathers structured evidence, and composes an answer from deterministic templates, or from an optional LLM for wording. The recommended action always comes from the deterministic composer, and the LLM is not called when no route is verified. A safety validator checks for unsupported operational wording, stale-as-current language, guarantees, and missing sources; rejected answers fall back to the deterministic composer. These heuristic checks do not prove that every LLM claim matches the record (see [review findings](./docs/CRITICAL_REVIEW.md)).
-7. **Show contradictions honestly.** When a social post disputes an official closure, the closure stays closed and gains a `contradiction_note`. Harborline does not average sources into a false consensus.
+5. **Treat satellite detections as unconfirmed.** A FIRMS heat detection is not a fire report: it can be a false positive (a gas flare, hot ground) and it misses fires under cloud. Detections are clustered into footprint polygons and never eliminate a route. A route through one costs a fixed penalty (15 min for a moderate cluster, 30 min for a severe one seen on two passes), triggers a second search that avoids it, and is named in the route summary and the recommended action. Only a two-pass severe cluster rejects a shelter. A WFIGS perimeter under 50 percent contained is an official severe fire area and eliminates a crossing route.
+6. **Route around verified hazards.** Candidate routes are intersected with hazard geometry. Routes that cross a closure, an evacuation zone, or a fire, flood or landslide area of severity severe or higher are eliminated; if every alternative is cut, the search reruns with those roads removed before giving up. A user who starts inside an evacuation zone is routed out of it. The survivors are risk-scored, a kept route that still passes a lower-severity hazard says so, and the answer is phrased as "the lowest-risk route currently available" rather than "safe".
+7. **Answer questions from evidence only.** The assistant plans which tools to run, gathers structured evidence, and composes an answer from deterministic templates, or from an optional LLM for wording. The recommended action always comes from the deterministic composer, and the LLM is not called when no route is verified. A safety validator checks for unsupported operational wording, stale-as-current language, guarantees, and missing sources; rejected answers fall back to the deterministic composer. These heuristic checks do not prove that every LLM claim matches the record (see [review findings](./docs/CRITICAL_REVIEW.md)). Fire and air questions get their own templates. The answer never says there is no fire or that the air is safe, a model-stated AQI must match the reading, and a stale reading is never stated as current. A shelter request can carry `access_needs` and a chosen `destination_resource_id`, and the response carries the route to the shelter it names.
+8. **Show contradictions honestly.** When a social post disputes an official closure, the closure stays closed and gains a `contradiction_note`. Harborline does not average sources into a false consensus.
+9. **Summarise the environment at a point.** `GET /v1/environment` returns the nearest air-quality reading, the nearest river gauge with its NWS flood category, nearby fire records, and power, each with provider, tier and age. No power-outage source is configured, so power is reported as not monitored, never as "no outage".
 
 ## Why it is different
 
-Most disaster chatbots put the model in front: they search, summarize, and hope the summary is right. Harborline puts a verified geospatial event layer in front and treats the model as a constrained interface to it, to constrain model output. Its heuristic validator catches specific failure patterns, but does not establish complete semantic grounding of optional LLM wording. The whole demo runs deterministically offline (`DEMO_MODE=1` seeds a California wildfire scenario over Chico, with every demo provider name prefixed `DEMO ·`), and 133 automated eval tests enforce the acceptance scenario and the hardening invariants: the stale shelter is rejected, the closed road is eliminated, and the lowest-risk route is recommended with sources and timestamps.
+Most disaster chatbots put the model in front: they search, summarize, and hope the summary is right. Harborline puts a verified geospatial event layer in front and treats the model as a constrained interface to it, to constrain model output. Its heuristic validator catches specific failure patterns, but does not establish complete semantic grounding of optional LLM wording. The whole demo runs deterministically offline (`DEMO_MODE=1` seeds a California wildfire scenario over Chico, with every demo provider name prefixed `DEMO ·`), and 222 automated eval tests enforce the acceptance scenario and the hardening invariants: the stale shelter is rejected, the closed road is eliminated, and the lowest-risk route is recommended with sources and timestamps.
 
 The [critical code review](./docs/CRITICAL_REVIEW.md) added regressions for consistent shelter selection and routing, hazard checks on route approaches, unavailable destinations, and travel advice when no route is verified. A second review (2026-11-15) found routes through severe fire areas, stale hazards ignored in shelter checks, and a hand-typed benchmark score; its fixes and regressions are listed in the same document. `.era/runtime` is local runtime state and is not included in the repository.
 
@@ -54,7 +56,7 @@ Harborline was designed around Sentient's open-source GRID ecosystem, and one le
 
 ```mermaid
 flowchart LR
-    A[NWS · USGS · FEMA · demo] --> B[Ingestion scheduler<br/>backoff + circuit breaker]
+    A[NWS · USGS · FEMA · WFIGS · FIRMS<br/>AirNow · NWPS · HMS · demo] --> B[Ingestion scheduler<br/>backoff + circuit breaker]
     B --> C[Normalization<br/>merge by event id, all source records kept]
     C --> D[Verification<br/>tier x freshness x corroboration → label]
     D --> E[(EventStore<br/>MemoryStore now, PostGIS later)]
@@ -67,9 +69,20 @@ flowchart LR
 
 [docs/ARCHITECTURE.md](./docs/ARCHITECTURE.md) has the full detail: trust tiers, the confidence formula, freshness tables, the route-risk pipeline, and the validator's rejection rules.
 
+## Using the web app
+
+The web app at `apps/web` has four views. On a desktop the map stays on the right and a rail on the left switches between the other three. On a phone a bottom bar switches between all four.
+
+- **Now** shows the most urgent alert, the nearest open shelter with a **Route here** button, and tiles for alerts, fire, air quality, river level and power. Each value shows its source and age. A tile that has no data says so; it never shows a calm reading in place of missing data.
+- **Map** shows streets, hazard areas, shelters, closures, the route and unconfirmed satellite heat footprints. The **Layers** menu switches to NASA GIBS satellite imagery for a chosen day (not live) and turns layers on and off.
+- **Alerts** lists active alerts with filters (All, Official, Within 3 km, Weather) and opens each one with its instructions and sources.
+- **Ask** sends a question to the assistant. When the answer names a shelter, **Route to** draws the route that came with the answer.
+
+**Settings** holds your location (device, a point you pick on the map, or the demo default), your access needs and a larger-text option. The browser saves these in `localStorage` on your device. Your location is sent with each data request. The access needs the API understands (wheelchair access, accessible restroom, pets) are sent with each question to the assistant.
+
 ## Quick start
 
-Requires Node 20 or newer. You don't need a database, Docker, or any API keys.
+Requires Node 20 or newer. You don't need a database, Docker, or any API keys: every feed is keyless.
 
 ```bash
 npm install
@@ -105,6 +118,8 @@ Open **<http://localhost:3000>**. The seeded scenario gives you an active wildfi
 | `TRUST_PROXY` | `services/api` | unset | Set `1` only behind a TLS-terminating proxy that appends to `X-Forwarded-For`: rate limiting then keys on the last entry (the one the proxy added) instead of the socket address |
 | `NEXT_PUBLIC_API_URL` | `apps/web` | `http://localhost:8787` | REST + SSE base URL |
 
+The fire, air, gauge and smoke feeds need no variable. Their rate limits and terms of use are not confirmed (the FIRMS area files, NWPS and the ArcGIS layers), so they poll slowly: every 15 minutes for gauges and every 30 minutes for the rest. Outbound requests send the generic User-Agent `harborline-feed/1.0`.
+
 Geography is not scattered through the code: everything location-specific — map centre, connector bounding box, NWS alert area, shelter state filter — lives in a single `RegionConfig` at `packages/event-schema/src/region.ts`. The default region is California, centred on Chico (Butte County). To point Harborline at a different area, change that one file; the seeded demo scenario and the demonstration road graph share the Chico geography and would be re-authored alongside it.
 
 ## Commands
@@ -115,7 +130,8 @@ Geography is not scattered through the code: everything location-specific — ma
 | `npm run dev:web` | Run the web app on `:3000` |
 | `npm run build` | Build every workspace in dependency order |
 | `npm run check` | Builds the libraries, then `tsc --noEmit` across all workspaces. Works from a clean clone |
-| `npm test` | Builds the libraries, then 133 Vitest evals (plus 1 skipped: the out-of-scope benchmark criterion): safety validator, dedup, freshness, hardening invariants, acceptance scenario, review regressions, Camp Fire real-to-sim benchmark |
+| `npm test` | Builds the libraries, then 222 Vitest evals (plus 1 skipped: the out-of-scope benchmark criterion): safety validator, dedup, freshness, hardening invariants, acceptance scenario, review regressions, Camp Fire real-to-sim benchmark, satellite-fire safety rules, feed normalization from recorded responses, environment route |
+| `npm run -s smoke:live` | Calls each fire, air, gauge and smoke connector once against the live service. Prints one line per connector, then `LIVE_SMOKE_OK` only when all return ok (exit 1 otherwise). Makes real network calls, so CI does not run it. Needs `npm run build:libs` first |
 | `npm run scorecard` | Computes the Camp Fire scorecard from the replay tests; `-- --verify-docs` also checks this README and docs/BENCHMARK.md state the same count. Needs `npm run build` first |
 
 CI (`.github/workflows/ci.yml`) runs `npm ci`, build, check, test and the scorecard check on every push and pull request.
@@ -124,19 +140,20 @@ CI (`.github/workflows/ci.yml`) runs `npm ci`, build, check, test and the scorec
 
 | Path | What |
 |---|---|
-| `packages/event-schema` | The canonical contract: `CanonicalEvent`, `SourceRecord`, `Resource`, routing types, confidence + freshness policy, `Connector` interface |
+| `packages/event-schema` | The canonical contract: `CanonicalEvent`, `SourceRecord`, `Resource`, `Observation` (air, gauge and smoke readings), routing types, confidence + freshness policy, `Connector` interface |
 | `packages/agent-tools` | `EventStore`/`MemoryStore`, tool registry, query planner, composer, optional LLM wrapper, safety validator, route-risk engine |
-| `connectors` | NWS, USGS, FEMA shelters, and the seeded demo scenario |
+| `connectors` | NWS, USGS, FEMA shelters, NIFC WFIGS, NASA FIRMS, AirNow, NOAA NWPS, NOAA HMS smoke, and the seeded demo scenario |
 | `services/api` | Hono REST + SSE + ingestion scheduler |
 | `services/sentient-agent` | Python adapter serving Harborline as a Sentient Chat agent (Sentient Agent Framework, SSE `POST /assist`) |
 | `apps/web` | Next.js 16 UI: MapLibre dark map, live feed, assistant |
-| `evals` | Vitest suites for safety, dedup, freshness, and the end-to-end scenario |
+| `evals` | Vitest suites for safety, dedup, freshness, the satellite-fire safety rules, and the end-to-end scenario. `evals/src/fixtures/` holds one recorded live response per new feed |
+| `scripts` | Scorecard computation and the live connector smoke check |
 | `infrastructure` | Optional PostGIS + Redis compose stack for the upgrade path |
 | `docs` | [Build guide](./docs/BUILD_GUIDE.md) · [plan evaluation](./docs/PLAN_EVALUATION.md) · [architecture](./docs/ARCHITECTURE.md) · [API reference](./docs/API.md) · [runbook](./docs/RUNBOOK.md) · [roadmap](./docs/ROADMAP.md) · [research grounding](./docs/RESEARCH.md) · [Camp Fire benchmark](./docs/BENCHMARK.md) · [Sentient integration](./docs/SENTIENT.md) |
 
 ## Built with
 
-TypeScript end to end: Next.js 16, React 19, Tailwind 4, MapLibre GL, TanStack Query, Hono, Zod 4, Vitest. Basemap tiles © CARTO, © OpenStreetMap contributors. Alert data © NOAA/NWS, USGS, and FEMA/American Red Cross, each retained with its source record. Designed around Sentient's open-source GRID ecosystem (ROMA, OpenDeepSearch) via the adapter boundary in `packages/agent-tools`.
+TypeScript end to end: Next.js 16, React 19, Tailwind 4, MapLibre GL, TanStack Query, Hono, Zod 4, Vitest. Basemap © OpenFreeMap, © OpenMapTiles, © OpenStreetMap contributors; satellite imagery from NASA GIBS. Alert data © NOAA/NWS, USGS, and FEMA/American Red Cross; fire data from NASA FIRMS and NIFC; air quality from AirNow (EPA and partner agencies); river and smoke data from NOAA. Each is retained with its source record. Designed around Sentient's open-source GRID ecosystem (ROMA, OpenDeepSearch) via the adapter boundary in `packages/agent-tools`.
 
 ## License
 
@@ -148,7 +165,7 @@ MIT. See [LICENSE](LICENSE).
 > Sentient Labs hackathon project. The hackathon version proved the concept and won
 > the award. The rebuild brings it up to current engineering and research practice:
 > an evidence-first architecture with provenance and freshness on every record, a
-> safety validator gating all model output, 133 automated evals including the full
+> safety validator gating all model output, 222 automated evals including the full
 > acceptance scenario, a research-driven security and correctness hardening pass
 > (rate limiting, bounded SSE, store lifecycle, prompt-injection defenses,
 > read-time confidence decay, the five-element warning rule — see

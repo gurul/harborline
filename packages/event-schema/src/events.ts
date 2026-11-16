@@ -13,6 +13,16 @@ export const EventTypeSchema = z.enum([
   "transit_disruption",
   "evacuation_order",
   "weather_warning",
+  /**
+   * A cluster of satellite heat detections (VIIRS). Tier C at best: a sensor
+   * saw heat, no fire agency has confirmed a fire. Never eliminates a route.
+   */
+  "fire_detection",
+  /**
+   * An interagency wildfire record: a mapped perimeter, or an incident point
+   * when no perimeter is mapped yet. Severe below 50 percent containment.
+   */
+  "fire_perimeter",
 ]);
 export type EventType = z.infer<typeof EventTypeSchema>;
 

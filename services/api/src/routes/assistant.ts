@@ -22,9 +22,12 @@ import {
   llmCompose,
   llmComposeOpenAi,
   validateResponse,
+  type EvidenceBundle,
   type ToolContext,
 } from "@harborline/agent-tools";
 import { store } from "../state.js";
+import { serializableCandidates } from "./routes.js";
+import { fireFeedsHealthy } from "./environment.js";
 
 const LLM_TIMEOUT_MS = 15_000;
 
@@ -49,6 +52,19 @@ function appendUncertainty(response: AssistantResponse, note: string): Assistant
     ...response,
     uncertainty_note: existing && existing.length > 0 ? `${existing} ${note}` : note,
   };
+}
+
+/** True when the recommended route crosses a satellite detection or a fire perimeter. */
+export function routeCrossesFire(evidence: EvidenceBundle): boolean {
+  const rec = evidence.route?.recommendation;
+  if (!rec) return false;
+  const chosen = evidence.route?.candidates.find((c) => c.route_id === rec.route_id);
+  if (!chosen) return false;
+  return evidence.events.some(
+    (e) =>
+      (e.event_type === "fire_detection" || e.event_type === "fire_perimeter") &&
+      chosen.intersecting_event_ids.includes(e.event_id),
+  );
 }
 
 export const assistantRoutes = new Hono();
@@ -78,7 +94,11 @@ assistantRoutes.post("/ask", async (c) => {
   const now = new Date();
   const ctx: ToolContext = { store, now };
   const at: LonLat = [parsed.data.lon, parsed.data.lat];
-  const evidence = gatherEvidence(ctx, parsed.data.question, at);
+  const evidence = gatherEvidence(ctx, parsed.data.question, at, {
+    access_needs: parsed.data.access_needs,
+    destination_resource_id: parsed.data.destination_resource_id,
+    fire_feeds_healthy: fireFeedsHealthy(),
+  });
 
   let response: AssistantResponse | null = null;
   // Anthropic and OpenAI are interchangeable wording layers behind the same
@@ -93,7 +113,11 @@ assistantRoutes.post("/ask", async (c) => {
   // deterministic no-route guidance. Nothing checks free model text against
   // the eliminated roads, so the model is not asked.
   const noVerifiedRoute = evidence.route !== undefined && !evidence.route.recommendation;
-  const llmKey = noVerifiedRoute ? undefined : apiKey;
+  // The same reasoning applies when the chosen route crosses a fire record:
+  // the warning lives in the deterministic summary and action, and free model
+  // text could soften it.
+  const crossesFire = routeCrossesFire(evidence);
+  const llmKey = noVerifiedRoute || crossesFire ? undefined : apiKey;
   if (llmKey && activeLlmCalls < MAX_CONCURRENT_LLM) {
     activeLlmCalls += 1;
     try {
@@ -128,10 +152,15 @@ assistantRoutes.post("/ask", async (c) => {
     // The action a person follows is never model text: it comes from the
     // composer, which derives it from the route state. The model words the
     // answer only.
+    // The destination and route are deterministic too, so the route a client
+    // draws always ends at the shelter the answer names.
+    const deterministic = composeResponse(parsed.data.question, evidence, new Date());
     response = {
       ...response,
-      recommended_action: composeResponse(parsed.data.question, evidence, new Date())
-        .recommended_action,
+      recommended_action: deterministic.recommended_action,
+      destination_resource_id: deterministic.destination_resource_id,
+      route: deterministic.route,
+      access_needs_applied: deterministic.access_needs_applied,
     };
     // Benchmark criterion 6 (Camp Fire): the act-now note for an
     // `immediate`-urgency severe hazard is a system guarantee, not a model
@@ -186,5 +215,15 @@ assistantRoutes.post("/ask", async (c) => {
     response = deterministic;
   }
 
-  return c.json(response);
+  return c.json(serializableResponse(response));
 });
+
+/** A kept route always has a finite risk score; guard the boundary anyway. */
+function serializableResponse(response: AssistantResponse): AssistantResponse {
+  const candidate = response.route?.candidate;
+  if (!candidate || Number.isFinite(candidate.risk_score)) return response;
+  return {
+    ...response,
+    route: { ...response.route!, candidate: serializableCandidates([candidate])[0]! },
+  };
+}

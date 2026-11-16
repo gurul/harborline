@@ -6,6 +6,8 @@ const here = path.dirname(fileURLToPath(import.meta.url));
 /** @type {import("next").NextConfig} */
 const nextConfig = {
   reactStrictMode: true,
+  // The dev badge sits over the phone bottom bar; keep the dev view honest.
+  devIndicators: false,
   // Dev-only: let the dev server be reached as 127.0.0.1 as well as localhost
   // (a fresh origin with no geolocation grant, useful for demoing the
   // region-centre fallback). Ignored by production builds.

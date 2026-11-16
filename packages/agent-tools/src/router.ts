@@ -21,6 +21,7 @@ import {
   type RouteRecommendation,
   SEVERITY_RANK,
   eventMaxAge,
+  formatAge,
   haversineMeters,
   isStale,
   pointInGeometry,
@@ -83,7 +84,36 @@ export const MAX_SNAP_M = 1500;
  * Point geometries are excluded: a point says where a hazard was reported, not
  * how far it reaches, so it adds exposure instead.
  */
-const ZONE_HAZARD_TYPES: ReadonlySet<EventType> = new Set(["fire", "flood", "landslide"]);
+const ZONE_HAZARD_TYPES: ReadonlySet<EventType> = new Set([
+  "fire",
+  "fire_perimeter",
+  "flood",
+  "landslide",
+]);
+
+/**
+ * Fixed risk, in minutes, added per crossed event of a type that never
+ * eliminates a route.
+ *
+ * A satellite heat detection is unconfirmed: eliminating on it would turn one
+ * false-positive pixel on the only road into "no route" and refuge-in-place
+ * guidance. Exposure alone (1 unit per 100 m) is too weak: the router would
+ * trade a 3 minute detour for a road through a detection. The penalty is larger
+ * than any detour on the demonstration graph, so a detour wins whenever one
+ * exists, and the route is kept when none does.
+ */
+export const HAZARD_TYPE_PENALTY_MIN: Partial<
+  Record<EventType, Record<CanonicalEvent["severity"], number>>
+> = {
+  fire_detection: { minor: 0, moderate: 15, severe: 30, extreme: 30 },
+};
+
+/** Event types the second "avoid" search routes around when it can. */
+const AVOID_IF_POSSIBLE_TYPES: ReadonlySet<EventType> = new Set(["fire_detection"]);
+
+function typePenaltyMinutes(event: CanonicalEvent): number {
+  return HAZARD_TYPE_PENALTY_MIN[event.event_type]?.[event.severity] ?? 0;
+}
 
 type RejectedReason = NonNullable<RouteCandidate["rejected_reason"]>;
 
@@ -123,6 +153,8 @@ function zonesContaining(pt: LonLat, events: CanonicalEvent[]): Set<string> {
 }
 
 const MAX_ALTERNATIVES = 4;
+/** Risk added when a crossed record is past its freshness budget. */
+export const STALE_PENALTY_MIN = 5;
 const PENALTY_FACTOR = 1.6;
 const RECOMMENDATION_TTL_MS = 10 * 60 * 1000;
 
@@ -326,14 +358,48 @@ function eliminatingEdgeKeys(
   events: CanonicalEvent[],
   originZones: ReadonlySet<string>,
 ): Set<string> {
+  return edgesCrossing(graph, events.filter((e) => eliminationReason(e, originZones) !== null));
+}
+
+/**
+ * Edges that cross an avoid-if-possible event (a satellite detection with a
+ * non-zero penalty). Removed, together with the eliminating edges, for the
+ * second search that looks for a detour.
+ */
+function avoidingEdgeKeys(graph: RoadGraph, events: CanonicalEvent[]): Set<string> {
+  return edgesCrossing(
+    graph,
+    events.filter((e) => AVOID_IF_POSSIBLE_TYPES.has(e.event_type) && typePenaltyMinutes(e) > 0),
+  );
+}
+
+function edgesCrossing(graph: RoadGraph, events: CanonicalEvent[]): Set<string> {
   const blocked = new Set<string>();
-  const eliminating = events.filter((e) => eliminationReason(e, originZones) !== null);
+  if (events.length === 0) return blocked;
   for (const edge of graph.edges) {
-    if (eliminating.some((event) => edgeIntersectsEvent(edge.geometry, event))) {
+    if (events.some((event) => edgeIntersectsEvent(edge.geometry, event))) {
       blocked.add(edgeKey(edge));
     }
   }
   return blocked;
+}
+
+function bestOf(candidates: RouteCandidate[]): RouteCandidate | null {
+  let best: RouteCandidate | null = null;
+  for (const candidate of candidates) {
+    if (candidate.eliminated) continue;
+    if (best === null || candidate.risk_score < best.risk_score) best = candidate;
+  }
+  return best;
+}
+
+function crossesAvoidable(candidate: RouteCandidate | null, events: CanonicalEvent[]): boolean {
+  if (!candidate) return false;
+  return candidate.intersecting_event_ids.some((id) => {
+    const event = events.find((e) => e.event_id === id);
+    return event !== undefined && AVOID_IF_POSSIBLE_TYPES.has(event.event_type) &&
+      typePenaltyMinutes(event) > 0;
+  });
 }
 
 export function calculateRoutes(input: RouteInput, graph: RoadGraph = demoGraph): RouteResult {
@@ -380,19 +446,22 @@ export function calculateRoutes(input: RouteInput, graph: RoadGraph = demoGraph)
   if (!candidates.some((c) => !c.eliminated)) {
     enumerate(eliminatingEdgeKeys(graph, activeEvents, originZones));
   }
+  // A detection never eliminates, so the fallback above never runs for it.
+  // When the best survivor crosses one, search again with the detection edges
+  // (and the eliminating edges) removed. The fixed penalty then decides: a
+  // detour wins when one exists; otherwise the crossing route is kept.
+  if (crossesAvoidable(bestOf(candidates), activeEvents)) {
+    const blocked = eliminatingEdgeKeys(graph, activeEvents, originZones);
+    for (const key of avoidingEdgeKeys(graph, activeEvents)) blocked.add(key);
+    enumerate(blocked);
+  }
 
   if (candidates.length === 0) {
     const fallback = noPathCandidate(input.from, input.to);
     return { candidates: [fallback], best: null };
   }
 
-  let best: RouteCandidate | null = null;
-  for (const candidate of candidates) {
-    if (candidate.eliminated) continue;
-    if (best === null || candidate.risk_score < best.risk_score) best = candidate;
-  }
-
-  return { candidates, best };
+  return { candidates, best: bestOf(candidates) };
 }
 
 function scorePath(
@@ -491,7 +560,14 @@ function scorePath(
     return isStale(event.last_verified_at, eventMaxAge(event.event_type), input.now);
   });
 
-  const riskScore = duration + hazardExposure / 100 + (hasStaleEvidence ? 5 : 0);
+  let penaltyMin = 0;
+  for (const id of intersecting) {
+    const event = events.find((e) => e.event_id === id);
+    if (event) penaltyMin += typePenaltyMinutes(event);
+  }
+
+  const riskScore =
+    duration + hazardExposure / 100 + (hasStaleEvidence ? STALE_PENALTY_MIN : 0) + penaltyMin;
 
   return {
     route_id: routeId,
@@ -501,6 +577,7 @@ function scorePath(
     hazard_exposure_m: hazardExposure,
     intersecting_event_ids: [...intersecting],
     risk_score: riskScore,
+    penalty_min: penaltyMin,
     eliminated,
     rejected_reason: rejectedReason,
   };
@@ -518,6 +595,7 @@ export function buildRecommendation(
   destination: Resource,
   evidenceEventIds: string[],
   now: Date,
+  events: CanonicalEvent[] = [],
 ): RouteRecommendation {
   const crossed = best.intersecting_event_ids.length;
   const avoided = evidenceEventIds.filter(
@@ -542,6 +620,7 @@ export function buildRecommendation(
     summary:
       `Lowest-risk route currently available to ${destination.name} — ` +
       `${minutes} min, ${hazardClause}. ` +
+      satelliteDisclosure(best, events, now) +
       `Conditions may change.`,
     duration_min: best.duration_min,
     avoided_hazard_count: avoided,
@@ -550,4 +629,28 @@ export function buildRecommendation(
     expires_at: new Date(now.getTime() + RECOMMENDATION_TTL_MS).toISOString(),
     routing: "demonstration",
   };
+}
+
+/**
+ * Disclosure for a kept route that crosses satellite heat detections. A
+ * detection never eliminates, so the summary must say that the route passes
+ * one, that no fire agency has confirmed it, and how old it is.
+ */
+export function satelliteDisclosure(
+  route: RouteCandidate,
+  events: CanonicalEvent[],
+  now: Date,
+): string {
+  const crossed = events.filter(
+    (e) => e.event_type === "fire_detection" && route.intersecting_event_ids.includes(e.event_id),
+  );
+  if (crossed.length === 0) return "";
+  const newest = crossed.reduce((a, b) =>
+    new Date(b.last_verified_at).getTime() > new Date(a.last_verified_at).getTime() ? b : a,
+  );
+  const n = crossed.length;
+  return (
+    `It includes ${n} satellite heat detection${n === 1 ? "" : "s"}, ` +
+    `unconfirmed by a fire agency, detected ${formatAge(newest.last_verified_at, now)}. `
+  );
 }

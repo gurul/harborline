@@ -126,25 +126,21 @@ export function Markdown({ children }: { children: string }) {
   const blocks = parseBlocks(children);
 
   return (
-    <div className="space-y-2.5 text-xs leading-relaxed text-hl-muted">
+    <div className="space-y-3 text-base leading-6 text-white">
       {blocks.map((block, index) => {
         const key = `block-${index}`;
         switch (block.kind) {
-          case "heading":
+          case "heading": {
+            const Tag = block.level === 1 ? "h3" : "h4";
             return (
-              <p
-                key={key}
-                className={[
-                  "font-semibold text-white",
-                  block.level === 1 ? "text-sm" : "text-xs",
-                ].join(" ")}
-              >
+              <Tag key={key} className="text-base font-medium text-white">
                 {renderInline(block.text, key)}
-              </p>
+              </Tag>
             );
+          }
           case "bullets":
             return (
-              <ul key={key} className="list-disc space-y-1 pl-4 marker:text-hl-dim">
+              <ul key={key} className="list-disc space-y-1 pl-4 marker:text-hl-muted">
                 {block.items.map((item, i) => (
                   <li key={`${key}-${i}`}>{renderInline(item, `${key}-${i}`)}</li>
                 ))}
@@ -152,7 +148,7 @@ export function Markdown({ children }: { children: string }) {
             );
           case "numbers":
             return (
-              <ol key={key} className="list-decimal space-y-1 pl-4 marker:text-hl-dim">
+              <ol key={key} className="list-decimal space-y-1 pl-4 marker:text-hl-muted">
                 {block.items.map((item, i) => (
                   <li key={`${key}-${i}`}>{renderInline(item, `${key}-${i}`)}</li>
                 ))}

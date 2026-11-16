@@ -19,6 +19,7 @@
     "pretest": "npm run build:libs",
     "test": "npm run test -w evals",
     "scorecard": "node scripts/scorecard.mjs",
+    "smoke:live": "node scripts/live-smoke.mjs",
     "dev:api": "npm run dev -w services/api",
     "dev:web": "npm run dev -w apps/web"
   },

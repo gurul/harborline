@@ -67,6 +67,7 @@ function initialHealth(connector: Connector): SourceHealth {
     consecutive_failures: 0,
     circuit_open: false,
     last_success_records: null,
+    zero_rows_expected: connector.zero_rows_expected === true,
   };
 }
 
@@ -85,7 +86,7 @@ function applyItems(
   target: EventStore,
   result: Extract<ConnectorResult, { ok: true }>,
   state: ConnectorState,
-): { events: number; resources: number } {
+): { events: number; resources: number; observations: number } {
   const byEvent = new Map<string, SourceRecord[]>();
   for (const record of result.source_records) {
     if (!record.event_id) continue;
@@ -100,9 +101,18 @@ function applyItems(
   for (const resource of result.resources) {
     target.upsertResource(resource);
   }
+  // Observations are measurements, not a snapshot of live records: they age
+  // by freshness and are never reconciled by absence.
+  for (const observation of result.observations ?? []) {
+    target.upsertObservation?.(observation);
+  }
   reconcileAbsent(target, result, state);
 
-  return { events: result.events.length, resources: result.resources.length };
+  return {
+    events: result.events.length,
+    resources: result.resources.length,
+    observations: result.observations?.length ?? 0,
+  };
 }
 
 /** Close or expire what this connector stopped returning. See the header. */
@@ -182,6 +192,7 @@ async function runOnce(state: ConnectorState, target: EventStore): Promise<boole
     state.health.last_success_records = {
       events: result.events.length,
       resources: result.resources.length,
+      observations: result.observations?.length ?? 0,
     };
     return true;
   } catch (err) {

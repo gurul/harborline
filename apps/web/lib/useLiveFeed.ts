@@ -12,8 +12,10 @@ import {
 } from "@harborline/event-schema";
 import {
   DEFAULT_RADIUS_M,
+  MAIN_LIST_EXCLUDED_TYPES,
   STREAM_URL,
   fetchEvents,
+  isMainListEvent,
   type EventsResponse,
 } from "./api";
 
@@ -85,6 +87,7 @@ function mergeEvent(
 
 type EventListener = (event: CanonicalEvent) => void;
 type StatusListener = (connected: boolean) => void;
+type ResyncListener = () => void;
 
 interface Connection {
   source: EventSource | null;
@@ -94,6 +97,7 @@ interface Connection {
   connected: boolean;
   eventListeners: Set<EventListener>;
   statusListeners: Set<StatusListener>;
+  resyncListeners: Set<ResyncListener>;
 }
 
 const connections = new Map<string, Connection>();
@@ -135,6 +139,12 @@ function open(url: string, connection: Connection): void {
     }
   });
 
+  // The server drops a slow client's backlog and sends one `resync` frame:
+  // every cached read is then refetched rather than patched.
+  source.addEventListener("resync", () => {
+    for (const listener of connection.resyncListeners) listener();
+  });
+
   source.addEventListener("error", () => {
     announce(connection, false);
     source.close();
@@ -152,6 +162,7 @@ function subscribeToStream(
   url: string,
   onEvent: EventListener,
   onStatus: StatusListener,
+  onResync: ResyncListener,
 ): () => void {
   let connection = connections.get(url);
   if (!connection) {
@@ -163,6 +174,7 @@ function subscribeToStream(
       connected: false,
       eventListeners: new Set(),
       statusListeners: new Set(),
+      resyncListeners: new Set(),
     };
     connections.set(url, connection);
   }
@@ -171,6 +183,7 @@ function subscribeToStream(
   active.refs += 1;
   active.eventListeners.add(onEvent);
   active.statusListeners.add(onStatus);
+  active.resyncListeners.add(onResync);
   onStatus(active.connected);
 
   if (!active.source && active.timer === null) open(url, active);
@@ -178,6 +191,7 @@ function subscribeToStream(
   return () => {
     active.eventListeners.delete(onEvent);
     active.statusListeners.delete(onStatus);
+    active.resyncListeners.delete(onResync);
     active.refs -= 1;
     if (active.refs > 0) return;
     if (active.timer !== null) {
@@ -199,6 +213,10 @@ export interface LiveFeed {
   isError: boolean;
   error: Error | null;
   streamConnected: boolean;
+  /** True once a response has arrived, even if a later refetch failed. */
+  hasData: boolean;
+  /** Time of the last successful fetch or stream merge, ms since epoch; 0 if none. */
+  updatedAt: number;
   refetch: () => void;
 }
 
@@ -215,7 +233,11 @@ export function useLiveFeed(options: LiveFeedOptions): LiveFeed {
 
   const query = useQuery({
     queryKey,
-    queryFn: ({ signal }) => fetchEvents({ lat, lon, radius_m: radiusM }, signal),
+    queryFn: ({ signal }) =>
+      fetchEvents(
+        { lat, lon, radius_m: radiusM, exclude_types: [...MAIN_LIST_EXCLUDED_TYPES] },
+        signal,
+      ),
     staleTime: 15_000,
     refetchInterval: 60_000,
     refetchOnWindowFocus: true,
@@ -234,21 +256,28 @@ export function useLiveFeed(options: LiveFeedOptions): LiveFeed {
     return subscribeToStream(
       STREAM_URL,
       (incoming) => {
+        if (!isMainListEvent(incoming)) return;
         if (!withinRadius(incoming, anchor, keyRadiusM)) return;
         queryClient.setQueryData<EventsResponse>(key, (previous) =>
           mergeEvent(previous, incoming),
         );
       },
       setStreamConnected,
+      () => {
+        void queryClient.invalidateQueries();
+      },
     );
   }, [keySignature, queryClient, subscribe]);
 
   return {
-    events: query.data ? sortEvents(query.data.events) : [],
+    // A server that ignores `exclude_types` still cannot leak detections in.
+    events: query.data ? sortEvents(query.data.events.filter(isMainListEvent)) : [],
     isLoading: query.isPending,
     isError: query.isError,
     error: (query.error as Error | null) ?? null,
     streamConnected,
+    hasData: query.data !== undefined,
+    updatedAt: query.dataUpdatedAt,
     refetch: () => {
       void query.refetch();
     },

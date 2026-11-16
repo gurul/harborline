@@ -19,6 +19,7 @@ import { assistantRoutes } from "./routes/assistant.js";
 import { eventsRoutes } from "./routes/events.js";
 import { healthRoutes } from "./routes/health.js";
 import { resourcesRoutes } from "./routes/resources.js";
+import { environmentRoutes } from "./routes/environment.js";
 import { routesRoutes } from "./routes/routes.js";
 import { streamRoutes } from "./routes/stream.js";
 import { createRateLimit } from "./rate-limit.js";
@@ -134,6 +135,7 @@ export function createApp(): Hono {
         "GET /v1/resources",
         "GET /v1/resources/:id",
         "GET /v1/routes",
+        "GET /v1/environment",
         "POST /v1/assistant/ask",
         "GET /v1/stream",
       ],
@@ -144,6 +146,7 @@ export function createApp(): Hono {
   app.route("/v1/events", eventsRoutes);
   app.route("/v1/resources", resourcesRoutes);
   app.route("/v1/routes", routesRoutes);
+  app.route("/v1/environment", environmentRoutes);
   app.route("/v1/assistant", assistantRoutes);
   app.route("/v1/stream", streamRoutes);
 

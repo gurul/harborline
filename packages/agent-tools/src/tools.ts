@@ -8,8 +8,12 @@
  */
 import { z } from "zod";
 import {
+  type AccessNeed,
+  type AssistantSource,
   type CanonicalEvent,
   type EventType,
+  type NearbyObservation,
+  type ObservationKind,
   type LonLat,
   type NearbyResource,
   type OperationalStatus,
@@ -25,18 +29,20 @@ import {
   ageSeconds,
   eventMaxAge,
   formatAge,
+  haversineMeters,
   isStale,
+  observationMaxAge,
   pointInGeometry,
   resourceMaxAge,
 } from "@harborline/event-schema";
-import type { EventStore } from "./store.js";
+import { distanceToGeometryMeters, eventDistanceMeters, type EventStore } from "./store.js";
 import {
   HAZARD_BUFFER_M,
   POINT_HAZARD_RADIUS_M,
   buildRecommendation,
   calculateRoutes,
 } from "./router.js";
-import { planQuery, rankResources, resourceTypeFor } from "./planner.js";
+import { planQuery, rankResources, resourceTypeFor, type QueryIntent } from "./planner.js";
 import type { EvidenceBundle, RejectedResource } from "./composer.js";
 
 export interface ToolContext {
@@ -57,7 +63,22 @@ export const HAZARD_EVENT_TYPES: EventType[] = [
   "evacuation_order",
   "landslide",
   "fire",
+  "fire_perimeter",
+  "fire_detection",
 ];
+
+/** Fire record types: official ones first, then satellite detections. */
+export const FIRE_EVENT_TYPES: EventType[] = ["fire", "fire_perimeter", "fire_detection"];
+
+/** A satellite detection this close to a shelter is named as a caution. */
+export const DETECTION_CAUTION_RADIUS_M = 2_000;
+
+/**
+ * Events beyond this distance from both route endpoints cannot touch the
+ * demonstration graph, which spans a few kilometres. Bounding the query keeps
+ * route cost independent of how many statewide records the store holds.
+ */
+export const ROUTE_EVENT_MARGIN_M = 10_000;
 
 /** Default search radius for resource lookups, in meters. */
 export const DEFAULT_RESOURCE_RADIUS_M = 8_000;
@@ -146,12 +167,26 @@ export interface GetEventDetailsResult {
   source_records: ProvenanceEntry[];
 }
 
+export interface ResourceCaution {
+  resource_id: string;
+  event_id: string;
+  event_type: EventType;
+  distance_m: number;
+  age_label: string;
+  note: string;
+}
+
 export interface NearbyResourcesResult {
   recommendable: NearbyResource[];
   rejected: {
     resource: NearbyResource;
     rejected_reason: "stale_status" | "full" | "closed" | "inside_hazard_zone";
   }[];
+  /**
+   * Unconfirmed hazards near a recommendable resource. A moderate satellite
+   * detection does not reject a shelter, but the answer must name it.
+   */
+  cautions: ResourceCaution[];
 }
 
 export interface ResourceStatusResult {
@@ -186,6 +221,8 @@ export interface RouteRiskBreakdown {
   breakdown: {
     travel_minutes: number;
     hazard_penalty: number;
+    /** Fixed penalty for crossed satellite detections (never eliminating). */
+    detection_penalty: number;
     stale_data_penalty: number;
   };
 }
@@ -350,6 +387,31 @@ function containingHazard(
   return null;
 }
 
+function detectionCautions(
+  resource: Resource,
+  hazards: CanonicalEvent[],
+  now: Date,
+): ResourceCaution[] {
+  const at = resource.location.coordinates as LonLat;
+  const out: ResourceCaution[] = [];
+  for (const event of hazards) {
+    if (event.event_type !== "fire_detection") continue;
+    const distance = distanceToGeometryMeters(at, event.geometry);
+    if (distance > DETECTION_CAUTION_RADIUS_M) continue;
+    const age = formatAge(event.last_verified_at, now);
+    const where = distance === 0 ? "at this location" : `${Math.round(distance)} m away`;
+    out.push({
+      resource_id: resource.resource_id,
+      event_id: event.event_id,
+      event_type: event.event_type,
+      distance_m: distance,
+      age_label: age,
+      note: `satellite heat detection ${where}, detected ${age}, unconfirmed by a fire agency`,
+    });
+  }
+  return out;
+}
+
 function get_nearby_resources(
   ctx: ToolContext,
   input: {
@@ -378,6 +440,7 @@ function get_nearby_resources(
 
   const recommendable: NearbyResource[] = [];
   const rejected: NearbyResourcesResult["rejected"] = [];
+  const cautions: ResourceCaution[] = [];
 
   for (const resource of nearby) {
     // Freshness and status first (the existing gate), then hazard containment
@@ -391,10 +454,11 @@ function get_nearby_resources(
       rejected.push({ resource, rejected_reason: "inside_hazard_zone" });
     } else {
       recommendable.push(resource);
+      cautions.push(...detectionCautions(resource, hazards, ctx.now));
     }
   }
 
-  return { recommendable, rejected };
+  return { recommendable, rejected, cautions };
 }
 
 function get_resource_status(
@@ -428,7 +492,14 @@ function calculate_routes(
     throw new Error(`calculate_routes: unknown resource ${args.to_resource_id}`);
   }
 
-  const events = ctx.store.queryEvents({ statuses: ["active"], now: ctx.now });
+  const from: LonLat = [args.from_lon, args.from_lat];
+  const to = destination.location.coordinates as LonLat;
+  const events = ctx.store.queryEvents({
+    center: from,
+    radius_m: haversineMeters(from, to) + ROUTE_EVENT_MARGIN_M,
+    statuses: ["active"],
+    now: ctx.now,
+  });
   const rejection = classifyResource(destination, ctx.now) ??
     (containingHazard(destination, events) ? "inside_hazard_zone" : null);
   if (rejection) {
@@ -441,9 +512,6 @@ function calculate_routes(
       generated_at: ctx.now.toISOString(),
     };
   }
-  const from: LonLat = [args.from_lon, args.from_lat];
-  const to = destination.location.coordinates as LonLat;
-
   const { candidates, best } = calculateRoutes({ from, to, events, now: ctx.now });
 
   // Evidence = every hazard the router weighed, not just the ones on the
@@ -455,7 +523,7 @@ function calculate_routes(
   return {
     candidates,
     recommendation: best
-      ? buildRecommendation(best, destination, evidenceEventIds, ctx.now)
+      ? buildRecommendation(best, destination, evidenceEventIds, ctx.now, events)
       : null,
     destination,
     routing: "demonstration",
@@ -472,9 +540,10 @@ function score_route_risk(
   if (!candidate) return null;
 
   const hazardPenalty = candidate.hazard_exposure_m / 100;
+  const detectionPenalty = candidate.penalty_min ?? 0;
   const stalePenalty = Math.max(
     0,
-    candidate.risk_score - candidate.duration_min - hazardPenalty,
+    candidate.risk_score - candidate.duration_min - hazardPenalty - detectionPenalty,
   );
 
   return {
@@ -488,6 +557,7 @@ function score_route_risk(
     breakdown: {
       travel_minutes: candidate.duration_min,
       hazard_penalty: hazardPenalty,
+      detection_penalty: detectionPenalty,
       stale_data_penalty: stalePenalty,
     },
   };
@@ -543,7 +613,301 @@ function compare_source_records(
   };
 }
 
+// ---------------------------------------------------------------------------
+// Environment summary (air quality, river gauge, smoke, fire, power)
+// ---------------------------------------------------------------------------
+
+/** Default radius for the environment summary and fire questions, metres. */
+export const ENVIRONMENT_RADIUS_M = 25_000;
+export const MAX_ENVIRONMENT_RADIUS_M = 200_000;
+
+export const GetEnvironmentSummaryInput = LatLonSchema.extend({
+  radius_m: z.number().positive().max(MAX_ENVIRONMENT_RADIUS_M).default(ENVIRONMENT_RADIUS_M),
+  /**
+   * True when at least one fire connector's latest fetch succeeded. The tool
+   * layer has no view of connector health, so the caller supplies it. Without
+   * it the fire section reports `no_data`.
+   */
+  fire_feeds_healthy: z.boolean().default(false),
+});
+
+export type ObservationStatus = "ok" | "stale" | "no_data";
+
+interface Provenanced {
+  provider?: string;
+  provider_tier?: SourceTier;
+  source_url?: string | null;
+  last_verified_at?: string;
+  age_label?: string;
+}
+
+export interface AirQualitySection extends Provenanced {
+  status: ObservationStatus;
+  aqi?: number;
+  category?: string;
+  pollutant?: string;
+  name?: string;
+  distance_m?: number;
+}
+
+export interface StreamGaugeSection extends Provenanced {
+  status: ObservationStatus;
+  name?: string;
+  site_id?: string;
+  stage_ft?: number;
+  flood_category?: "no_flooding" | "action" | "minor" | "moderate" | "major" | "unknown";
+  forecast_category?: string;
+  distance_m?: number;
+}
+
+/** Internal: the assistant reads it; the REST contract does not carry it. */
+export interface SmokeSection extends Provenanced {
+  status: ObservationStatus;
+  density?: string;
+  over_point?: boolean;
+  name?: string;
+  distance_m?: number;
+}
+
+export interface FireSection {
+  status: "ok" | "no_data";
+  /** Satellite detection clusters (events), not individual pixels. */
+  detections: number;
+  nearest_distance_m?: number;
+  newest_observed_at?: string;
+  newest_age_label?: string;
+  perimeters: number;
+  nearest_perimeter_name?: string;
+  /** A fire agency record (perimeter, incident or fire alert) is within the radius. */
+  confirmed: boolean;
+  note: string;
+}
+
+export interface PowerSection {
+  status: "not_monitored" | "outage_reported";
+  note: string;
+}
+
+export interface EnvironmentSummary {
+  generated_at: string;
+  radius_m: number;
+  air_quality: AirQualitySection;
+  stream_gauge: StreamGaugeSection;
+  smoke: SmokeSection;
+  fire: FireSection;
+  power: PowerSection;
+  sources: AssistantSource[];
+}
+
+/** The note the fire section carries when the feed is healthy and nothing is near. */
+export const FIRE_NOT_PROOF_NOTE =
+  "No satellite detection is not proof of no fire: satellites pass only a few times a day, " +
+  "and cloud or smoke can hide a fire.";
+
+function kmLabel(m: number): string {
+  return m < 1000 ? `${Math.round(m)} m` : `${(m / 1000).toFixed(1)} km`;
+}
+
+/**
+ * Nearest fresh observation of a kind; when none is fresh, the nearest stale
+ * one, reported as stale so it is never described as current.
+ */
+function pickObservation(
+  ctx: ToolContext,
+  center: LonLat,
+  radius: number,
+  kind: ObservationKind,
+): { obs: NearbyObservation; stale: boolean } | null {
+  const found = ctx.store.queryObservations?.({ center, radius_m: radius, kind }) ?? [];
+  if (found.length === 0) return null;
+  const maxAge = observationMaxAge(kind);
+  const fresh = found.find((o) => !isStale(o.last_verified_at, maxAge, ctx.now));
+  if (fresh) return { obs: fresh, stale: false };
+  return { obs: found[0]!, stale: true };
+}
+
+function provenanceOf(obs: NearbyObservation, now: Date): Provenanced & { distance_m: number } {
+  return {
+    provider: obs.provider,
+    provider_tier: obs.provider_tier,
+    source_url: obs.source_url,
+    last_verified_at: obs.last_verified_at,
+    age_label: formatAge(obs.last_verified_at, now),
+    distance_m: Math.round(obs.distance_m),
+  };
+}
+
+function get_environment_summary(
+  ctx: ToolContext,
+  input: { lat: number; lon: number; radius_m?: number; fire_feeds_healthy?: boolean },
+): EnvironmentSummary {
+  const args = GetEnvironmentSummaryInput.parse(input);
+  const center: LonLat = [args.lon, args.lat];
+  const radius = args.radius_m;
+  const sources: AssistantSource[] = [];
+  const cite = (provider: string, tier: SourceTier, url: string | null, at: string) => {
+    const existing = sources.find((s) => s.provider === provider && s.url === url && s.tier === tier);
+    if (!existing) sources.push({ provider, tier, url, last_verified_at: at });
+    else if (new Date(at).getTime() > new Date(existing.last_verified_at).getTime()) {
+      existing.last_verified_at = at;
+    }
+  };
+
+  // Air quality.
+  let air_quality: AirQualitySection = { status: "no_data" };
+  const air = pickObservation(ctx, center, radius, "air_quality");
+  if (air && air.obs.kind === "air_quality") {
+    air_quality = {
+      status: air.stale ? "stale" : "ok",
+      aqi: air.obs.aqi,
+      category: air.obs.category,
+      pollutant: air.obs.pollutant,
+      name: air.obs.name,
+      ...provenanceOf(air.obs, ctx.now),
+    };
+    cite(air.obs.provider, air.obs.provider_tier, air.obs.source_url, air.obs.last_verified_at);
+  }
+
+  // River gauge.
+  let stream_gauge: StreamGaugeSection = { status: "no_data" };
+  const gauge = pickObservation(ctx, center, radius, "stream_gauge");
+  if (gauge && gauge.obs.kind === "stream_gauge") {
+    stream_gauge = {
+      status: gauge.stale ? "stale" : "ok",
+      name: gauge.obs.name,
+      site_id: gauge.obs.site_id,
+      ...(gauge.obs.stage_ft !== null ? { stage_ft: gauge.obs.stage_ft } : {}),
+      flood_category: gauge.obs.flood_category,
+      ...(gauge.obs.forecast_category ? { forecast_category: gauge.obs.forecast_category } : {}),
+      ...provenanceOf(gauge.obs, ctx.now),
+    };
+    cite(gauge.obs.provider, gauge.obs.provider_tier, gauge.obs.source_url, gauge.obs.last_verified_at);
+  }
+
+  // Smoke (internal section).
+  let smoke: SmokeSection = { status: "no_data" };
+  const plume = pickObservation(ctx, center, radius, "smoke");
+  if (plume && plume.obs.kind === "smoke") {
+    smoke = {
+      status: plume.stale ? "stale" : "ok",
+      density: plume.obs.density,
+      over_point: plume.obs.distance_m === 0,
+      name: plume.obs.name,
+      ...provenanceOf(plume.obs, ctx.now),
+    };
+    cite(plume.obs.provider, plume.obs.provider_tier, plume.obs.source_url, plume.obs.last_verified_at);
+  }
+
+  // Fire.
+  const fireEvents = ctx.store.queryEvents({
+    center,
+    radius_m: radius,
+    types: FIRE_EVENT_TYPES,
+    statuses: ["active"],
+    now: ctx.now,
+  });
+  const detections = fireEvents.filter((e) => e.event_type === "fire_detection");
+  const perimeters = fireEvents.filter((e) => e.event_type === "fire_perimeter");
+  const official = fireEvents.filter((e) => e.event_type !== "fire_detection");
+  const nearest = (events: CanonicalEvent[]) =>
+    events
+      .map((e) => ({ e, d: eventDistanceMeters(center, e) }))
+      .sort((a, b) => a.d - b.d)[0];
+  const nearestDetection = nearest(detections);
+  const nearestPerimeter = nearest(perimeters);
+  const newestDetection = detections.reduce<CanonicalEvent | null>(
+    (best, e) =>
+      best === null || new Date(e.last_verified_at).getTime() > new Date(best.last_verified_at).getTime()
+        ? e
+        : best,
+    null,
+  );
+  for (const event of fireEvents) {
+    const records = ctx.store.getEvent(event.event_id)?.source_records ?? [];
+    for (const r of records) cite(r.provider, r.provider_tier, r.source_url, r.published_at);
+  }
+
+  let note: string;
+  if (!args.fire_feeds_healthy) {
+    note =
+      "None of the fire feeds has a current successful fetch, so fire status here is unknown. " +
+      "A missing record is not evidence about fire either way.";
+  } else if (fireEvents.length === 0) {
+    note = `No satellite heat detection or fire agency record within ${kmLabel(radius)} in the last 24 h. ${FIRE_NOT_PROOF_NOTE}`;
+  } else {
+    const parts: string[] = [];
+    if (official.length > 0) {
+      parts.push(`${official.length} fire agency record${official.length === 1 ? "" : "s"} within ${kmLabel(radius)}.`);
+    }
+    if (detections.length > 0 && nearestDetection && newestDetection) {
+      parts.push(
+        `${detections.length} satellite heat detection cluster${detections.length === 1 ? "" : "s"} ` +
+          `within ${kmLabel(radius)}, nearest ${kmLabel(nearestDetection.d)}, newest detected ` +
+          `${formatAge(newestDetection.last_verified_at, ctx.now)}, unconfirmed by a fire agency.`,
+      );
+    }
+    parts.push("Satellites pass only a few times a day; cloud or smoke can hide a fire.");
+    note = parts.join(" ");
+  }
+
+  const fire: FireSection = {
+    status: args.fire_feeds_healthy ? "ok" : "no_data",
+    detections: detections.length,
+    ...(nearestDetection ? { nearest_distance_m: Math.round(nearestDetection.d) } : {}),
+    ...(newestDetection
+      ? {
+          newest_observed_at: newestDetection.last_verified_at,
+          newest_age_label: formatAge(newestDetection.last_verified_at, ctx.now),
+        }
+      : {}),
+    perimeters: perimeters.length,
+    ...(nearestPerimeter ? { nearest_perimeter_name: nearestPerimeter.e.headline } : {}),
+    confirmed: official.length > 0,
+    note,
+  };
+
+  // Power. No outage source is configured, so the absence of a record is never
+  // reported as "no outage": the section says the area is not monitored.
+  const outages = ctx.store.queryEvents({
+    center,
+    radius_m: radius,
+    types: ["power_outage"],
+    statuses: ["active"],
+    now: ctx.now,
+  });
+  let power: PowerSection;
+  if (outages.length > 0) {
+    const newest = outages[0]!;
+    const records = ctx.store.getEvent(newest.event_id)?.source_records ?? [];
+    for (const r of records) cite(r.provider, r.provider_tier, r.source_url, r.published_at);
+    power = {
+      status: "outage_reported",
+      note:
+        `${outages.length} power outage report${outages.length === 1 ? "" : "s"} within ${kmLabel(radius)}, ` +
+        `newest updated ${formatAge(newest.last_verified_at, ctx.now)}. Outage coverage is partial.`,
+    };
+  } else {
+    power = {
+      status: "not_monitored",
+      note:
+        "Power outages are not monitored for this area. The absence of a report does not mean the power is on.",
+    };
+  }
+
+  return {
+    generated_at: ctx.now.toISOString(),
+    radius_m: radius,
+    air_quality,
+    stream_gauge,
+    smoke,
+    fire,
+    power,
+    sources,
+  };
+}
+
 export const tools = {
+  get_environment_summary,
   get_active_events,
   get_event_details,
   get_nearby_resources,
@@ -565,18 +929,44 @@ export type ToolRegistry = typeof tools;
  * `EvidenceBundle`. Keeps the API handler thin and guarantees the bundle always
  * carries the source records behind every event it contains.
  */
+export interface GatherOptions {
+  radius_m?: number;
+  /** Caller-stated access needs; applied by ranking only. */
+  access_needs?: AccessNeed[];
+  /** A shelter the caller asked to be routed to. Forces the shelter path. */
+  destination_resource_id?: string;
+  /** Whether a fire connector's latest fetch succeeded (see get_environment_summary). */
+  fire_feeds_healthy?: boolean;
+}
+
+/** Official record types a fire question reports alongside the fire feeds. */
+const FIRE_QUESTION_TYPES: EventType[] = [...FIRE_EVENT_TYPES, "evacuation_order", "weather_warning"];
+/** Records an air question reports: alerts, and any evacuation order nearby. */
+const AIR_QUESTION_TYPES: EventType[] = ["weather_warning", "evacuation_order"];
+
 export function gatherEvidence(
   ctx: ToolContext,
   question: string,
   at: LonLat,
-  opts: { radius_m?: number } = {},
+  opts: GatherOptions = {},
 ): EvidenceBundle {
-  const { intent } = planQuery(question);
+  // A request for a route to a named shelter is a shelter request, whatever
+  // the wording. The bundle records the intent so the composer agrees.
+  const intent: QueryIntent = opts.destination_resource_id
+    ? "nearest_shelter"
+    : planQuery(question).intent;
   const [lon, lat] = at;
-  const radius = opts.radius_m ?? DEFAULT_RESOURCE_RADIUS_M;
+  const environmental = intent === "fire_nearby" || intent === "air_quality";
+  const radius = opts.radius_m ?? (environmental ? ENVIRONMENT_RADIUS_M : DEFAULT_RESOURCE_RADIUS_M);
 
   const typeFilter: EventType[] | undefined =
-    intent === "roads_to_avoid" ? HAZARD_EVENT_TYPES : undefined;
+    intent === "roads_to_avoid"
+      ? HAZARD_EVENT_TYPES
+      : intent === "fire_nearby"
+        ? FIRE_QUESTION_TYPES
+        : intent === "air_quality"
+          ? AIR_QUESTION_TYPES
+          : undefined;
 
   const events = tools.get_active_events(ctx, {
     lat,
@@ -592,19 +982,40 @@ export function gatherEvidence(
     if (detail) sourceRecords.push(...detail.source_records);
   }
 
-  const bundle: EvidenceBundle = { events, source_records: sourceRecords };
+  const bundle: EvidenceBundle = { intent, events, source_records: sourceRecords };
+
+  if (environmental) {
+    bundle.environment = tools.get_environment_summary(ctx, {
+      lat,
+      lon,
+      radius_m: Math.min(radius, MAX_ENVIRONMENT_RADIUS_M),
+      fire_feeds_healthy: opts.fire_feeds_healthy ?? false,
+    });
+  }
 
   if (intent === "nearest_shelter" || intent === "resource_query") {
     const resourceType: ResourceType | undefined =
       intent === "nearest_shelter" ? "shelter" : resourceTypeFor(question);
-    const { recommendable, rejected } = tools.get_nearby_resources(ctx, {
+    const { recommendable, rejected, cautions } = tools.get_nearby_resources(ctx, {
       lat,
       lon,
       resource_type: resourceType,
       radius_m: radius,
     });
-    bundle.resources = rankResources(question, recommendable);
+    const requested = intent === "nearest_shelter" && opts.destination_resource_id
+      ? placeRequested(ctx, opts.destination_resource_id, at, recommendable, rejected)
+      : undefined;
+    const needs = opts.access_needs ?? [];
+    bundle.ranking = {
+      access_needs: needs,
+      ...(requested ? { requested_resource_id: opts.destination_resource_id, requested_status: requested } : {}),
+    };
+    bundle.resources = rankResources(question, recommendable, {
+      access_needs: needs,
+      preferred_resource_id: requested === "selected" ? opts.destination_resource_id : undefined,
+    });
     bundle.rejected_resources = rejected as RejectedResource[];
+    bundle.resource_cautions = cautions;
 
     if (intent === "nearest_shelter" && recommendable.length > 0) {
       const destination = bundle.resources![0]!;
@@ -622,4 +1033,41 @@ export function gatherEvidence(
   }
 
   return bundle;
+}
+
+/**
+ * Put a caller-requested shelter into the right list. A shelter outside the
+ * search radius is looked up by id and passes the same gate as the others.
+ * Mutates `recommendable` / `rejected`. Returns how the request was resolved.
+ */
+function placeRequested(
+  ctx: ToolContext,
+  id: string,
+  at: LonLat,
+  recommendable: NearbyResource[],
+  rejected: NearbyResourcesResult["rejected"],
+): "selected" | "not_recommendable" | "unknown" {
+  if (recommendable.some((r) => r.resource_id === id)) return "selected";
+  if (rejected.some((r) => r.resource.resource_id === id)) return "not_recommendable";
+  const resource = ctx.store.getResource(id);
+  if (!resource || resource.resource_type !== "shelter") return "unknown";
+  const nearby: NearbyResource = {
+    ...resource,
+    distance_m: haversineMeters(at, resource.location.coordinates as LonLat),
+  };
+  const hazards = ctx.store.queryEvents({
+    center: resource.location.coordinates as LonLat,
+    radius_m: MAX_RESOURCE_RADIUS_M,
+    types: HAZARD_EVENT_TYPES,
+    statuses: ["active"],
+    now: ctx.now,
+  });
+  const reason = classifyResource(resource, ctx.now) ??
+    (containingHazard(resource, hazards) ? "inside_hazard_zone" : null);
+  if (reason) {
+    rejected.push({ resource: nearby, rejected_reason: reason });
+    return "not_recommendable";
+  }
+  recommendable.push(nearby);
+  return "selected";
 }

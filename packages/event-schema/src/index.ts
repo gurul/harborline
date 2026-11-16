@@ -2,6 +2,7 @@ export * from "./geo.js";
 export * from "./region.js";
 export * from "./events.js";
 export * from "./resources.js";
+export * from "./observations.js";
 export * from "./routing.js";
 export * from "./confidence.js";
 export * from "./freshness.js";

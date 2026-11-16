@@ -163,35 +163,51 @@ Deterministic first, LLM optional. Exports:
 
 ## 6. Web app — `apps/web` (Next.js 16, App Router)
 
-**Aesthetic (from the design reference):** near-black background `#0a0a0c`, white
-text, generous rounded corners (`rounded-2xl+`), pill buttons, high-signal color
-coding: amber status pill (`Status: Elevated risk`), red hazard markers, green "Open"
-shelter markers, teal route line, muted grays elsewhere. Tagline in footer:
-*"Designed for calm in moments of chaos."* Large touch targets, chunked information,
-low noise. Tabular data never over-dense.
+**Look:** near-black background `#0a0a0c`, white text, rounded cards, and colour
+used only for meaning: red and amber for severity, green for an open shelter, teal
+for the route and the main action, grey for everything else. Text is never smaller
+than 12 px, body text is 16 px, targets are at least 44 px, contrast is at least
+4.5:1, focus is always visible, and motion stops when the system asks for reduced
+motion.
 
-**Layout:** header (HARBORLINE wordmark + status pill) above a responsive 3-panel
-grid (stacks on mobile):
+**Layout:** a header (wordmark, connection status, location, Settings) above a
+situation banner that shows the most urgent alert. The header never says "Live"
+when the API cannot be reached; it says "Cannot reach Harborline" with the time of
+the last data. Below the banner:
 
-1. **Map panel** — MapLibre GL, CARTO dark-matter raster tiles
-   (`https://basemaps.cartocdn.com/dark_all/{z}/{x}/{y}.png`, attribution required).
-   Hazard markers/polygons colored by severity, shelter markers with open/closed
-   state, user location dot (geolocation with region-centre fallback
-   `REGION.center` — Chico by default), recommended route as teal line. Filter chips: All /
-   Hazards / Shelters / Medical / Food & Water. Clicking a marker opens a detail
-   card: status, verification label, "Updated N min ago", source, description.
-   Bottom bar: "Safest route to nearest open shelter — N min · avoids M hazards"
-   (wording: "lowest-risk", see §5 rules — never "safe route" without qualifier).
-2. **Live feed panel** — tabs All / Official / Nearby / Weather. Cards show publisher
-   + tier badge (Official / Verified / Developing / Unverified), age ("2 min ago"),
-   distance, event category chip, headline/body, evidence count. Top slot pins the
-   highest-severity active alert with amber accent. Live via SSE (`/v1/stream`)
-   merged into TanStack Query cache.
-3. **Assistant panel** — chat UI. Suggested prompts: "Where is the nearest open
-   shelter?", "Which roads should I avoid?", "What changed in the last hour?".
-   Renders `AssistantResponse`: answer, recommended action, source chips with
-   timestamps, uncertainty note in muted italic. Answers include "Updated X ago"
-   badges. No free-form LLM text without the sources block.
+- **Desktop (1024 px and up):** a 400 px rail on the left with tabs Now / Alerts /
+  Ask, and the map on the right.
+- **Phone:** one view at a time, switched by a bottom bar Now / Map / Alerts / Ask.
+  The view is kept in the URL (`?view=`), so Back works.
+
+Views:
+
+1. **Now** — the nearest open shelter (distance, direction, capacity, access
+   features, source and age) with **Route here**; shelters left out and why;
+   tiles for alerts, fire, air quality, river gauge and power. Every tile has
+   loading, error, stale and not-connected states and shows its source and age.
+   Power reads "Not monitored" because no source is configured.
+2. **Map** — MapLibre GL over the keyless OpenFreeMap dark vector style
+   (contrast raised in `lib/mapLayers.ts`; attribution from the style). A
+   **Layers** menu switches to NASA GIBS MODIS true-colour imagery for a chosen
+   day and toggles hazards, fire detections, closures, shelters, medical and
+   food & water. Satellite heat detections draw as unconfirmed footprints shaded
+   by age. Clicking a marker opens a place card. A route goes only to the shelter
+   the user chose or the answer named; the route bar uses "lowest-risk" wording,
+   never "safe".
+3. **Alerts** — filters All / Official / Within 3 km / Weather. Each row shows
+   severity, confidence label, type, distance and age; a detail page shows the
+   instructions, description, contradiction note and sources.
+4. **Ask** — chat with prompt cards ("Where is the nearest open shelter?",
+   "Which roads should I avoid?", "What changed in the last hour?", "What should
+   I do right now?"). Renders `AssistantResponse`: recommended action first, then
+   the answer, sources with ages, freshness and uncertainty notes. **Route to**
+   draws the answer's own `route` when it has one.
+
+**Settings sheet:** location (device, a point picked on the map, or the region
+default), access needs and larger text, saved in `localStorage` under
+`hl.prefs.v1`. Access needs the API accepts (`wheelchair`, `accessible_restroom`,
+`pets`) are sent with assistant requests.
 
 Data layer: TanStack Query + `NEXT_PUBLIC_API_URL` (default `http://localhost:8787`).
 SSE with reconnect. All API types imported from `@harborline/event-schema`.

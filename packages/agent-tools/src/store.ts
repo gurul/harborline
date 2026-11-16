@@ -15,7 +15,10 @@ import {
   type EventType,
   type Geometry,
   type LonLat,
+  type NearbyObservation,
   type NearbyResource,
+  type Observation,
+  type ObservationKind,
   type OperationalStatus,
   type Resource,
   type ResourceType,
@@ -29,6 +32,7 @@ import {
   eventMaxAge,
   geometryCentroid,
   haversineMeters,
+  observationMaxAge,
   pointInGeometry,
   resourceMaxAge,
 } from "@harborline/event-schema";
@@ -80,6 +84,28 @@ export function eventDistanceMeters(pt: LonLat, event: CanonicalEvent): number {
   );
 }
 
+/**
+ * True when two versions of an event differ only in the confidence fields,
+ * which the store recomputes on every upsert from the retrieval time.
+ */
+function sameContent(a: CanonicalEvent, b: CanonicalEvent): boolean {
+  const strip = ({ confidence_score: _s, confidence_label: _l, ...rest }: CanonicalEvent) => rest;
+  return JSON.stringify(strip(a)) === JSON.stringify(strip(b));
+}
+
+/**
+ * Time a record was last known to exist upstream: its own verification time,
+ * or the newest retrieval of one of its source records when that is later.
+ */
+function lastSeenMs(event: CanonicalEvent, records: Iterable<SourceRecord> | undefined): number {
+  let best = new Date(event.last_verified_at).getTime();
+  for (const record of records ?? []) {
+    const t = new Date(record.retrieved_at).getTime();
+    if (Number.isFinite(t) && (!Number.isFinite(best) || t > best)) best = t;
+  }
+  return best;
+}
+
 /** Parsed `ends_at`, or null when absent/unparseable. */
 function endsAtMs(event: CanonicalEvent): number | null {
   if (!event.ends_at) return null;
@@ -121,6 +147,21 @@ export interface ResourceQuery {
  */
 export const MAX_EVENTS = 10_000;
 
+export interface ObservationQuery {
+  center: LonLat;
+  radius_m?: number;
+  kind?: ObservationKind;
+}
+
+/** Hard ceiling on retained observations (national gauge and AQI files). */
+export const MAX_OBSERVATIONS = 20_000;
+
+/** Distance from a point to an observation: smoke is an area, the rest are points. */
+export function observationDistanceMeters(pt: LonLat, obs: Observation): number {
+  if (obs.kind === "smoke") return distanceToGeometryMeters(pt, obs.area);
+  return haversineMeters(pt, obs.location.coordinates as LonLat);
+}
+
 /**
  * Hard ceiling on retained resources. FEMA's national shelter layer can return
  * far more rows than one region needs; without a cap the resource map grows
@@ -157,12 +198,20 @@ export interface EventStore {
    * implementations stay valid; `MemoryStore` implements it.
    */
   sweepExpired?(now: Date): SweepResult;
+  /**
+   * Observations (air quality, gauges, smoke). Optional so existing
+   * implementations stay valid; `MemoryStore` implements them.
+   */
+  upsertObservation?(observation: Observation): void;
+  queryObservations?(opts: ObservationQuery): NearbyObservation[];
+  allObservations?(): Observation[];
 }
 
 export class MemoryStore implements EventStore {
   private readonly events = new Map<string, CanonicalEvent>();
   private readonly records = new Map<string, Map<string, SourceRecord>>();
   private readonly resources = new Map<string, Resource>();
+  private readonly observations = new Map<string, Observation>();
   private readonly listeners = new Set<(event: CanonicalEvent) => void>();
 
   upsertEvent(event: CanonicalEvent, sourceRecords: SourceRecord[]): void {
@@ -171,7 +220,10 @@ export class MemoryStore implements EventStore {
     // Union of source records, keyed by source_record_id — provenance is never
     // merged away.
     const bucket = this.records.get(event.event_id) ?? new Map<string, SourceRecord>();
+    let provenanceChanged = false;
     for (const record of sourceRecords) {
+      const prior = bucket.get(record.source_record_id);
+      if (!prior || prior.content_hash !== record.content_hash) provenanceChanged = true;
       bucket.set(record.source_record_id, record);
     }
     this.records.set(event.event_id, bucket);
@@ -238,7 +290,10 @@ export class MemoryStore implements EventStore {
     }
 
     this.events.set(next.event_id, next);
-    this.emit(next);
+    // A poll that returns the same record again changes nothing a subscriber
+    // can act on. Re-emitting it would resend every satellite cluster on every
+    // poll and push slow stream clients into a resync for no change.
+    if (!existing || provenanceChanged || !sameContent(existing, next)) this.emit(next);
   }
 
   /**
@@ -369,6 +424,34 @@ export class MemoryStore implements EventStore {
     return [...this.resources.values()];
   }
 
+  /** Keep the newer reading: a re-read file must not roll a site backwards. */
+  upsertObservation(observation: Observation): void {
+    const existing = this.observations.get(observation.observation_id);
+    if (
+      existing &&
+      new Date(existing.last_verified_at).getTime() > new Date(observation.last_verified_at).getTime()
+    ) {
+      return;
+    }
+    this.observations.set(observation.observation_id, observation);
+  }
+
+  queryObservations(opts: ObservationQuery): NearbyObservation[] {
+    const radius = opts.radius_m ?? Infinity;
+    const out: NearbyObservation[] = [];
+    for (const obs of this.observations.values()) {
+      if (opts.kind && obs.kind !== opts.kind) continue;
+      const distance = observationDistanceMeters(opts.center, obs);
+      if (distance > radius) continue;
+      out.push({ ...obs, distance_m: distance });
+    }
+    return out.sort((a, b) => a.distance_m - b.distance_m);
+  }
+
+  allObservations(): Observation[] {
+    return [...this.observations.values()];
+  }
+
   onChange(cb: (event: CanonicalEvent) => void): () => void {
     this.listeners.add(cb);
     return () => {
@@ -403,11 +486,15 @@ export class MemoryStore implements EventStore {
 
     for (const [id, event] of [...this.events]) {
       const retentionSeconds = RETENTION_AGE_MULTIPLIER * eventMaxAge(event.event_type);
-      const verifiedMs = new Date(event.last_verified_at).getTime();
-      if (!Number.isFinite(verifiedMs)) continue;
+      // Measured from the last time the record was seen upstream, not from its
+      // data time: a multi-day alert or a perimeter drawn two days ago that the
+      // feed still returns is still live, and deleting it would make it flap
+      // (deleted, then re-added on the next poll).
+      const seenMs = lastSeenMs(event, this.records.get(id)?.values());
+      if (!Number.isFinite(seenMs)) continue;
       // Plain arithmetic rather than ageSeconds(): a future-dated record must
       // read as "not yet old", not as the infinite-age staleness sentinel.
-      if ((nowMs - verifiedMs) / 1000 > retentionSeconds) {
+      if ((nowMs - seenMs) / 1000 > retentionSeconds) {
         this.deleteEvent(id);
         deleted++;
       }
@@ -448,6 +535,27 @@ export class MemoryStore implements EventStore {
       const excess = this.resources.size - MAX_RESOURCES;
       for (let i = 0; i < excess; i++) {
         this.resources.delete(oldestFirst[i]!.resource_id);
+        deleted++;
+      }
+    }
+
+    for (const [id, obs] of [...this.observations]) {
+      const retentionSeconds = RETENTION_AGE_MULTIPLIER * observationMaxAge(obs.kind);
+      const verifiedMs = new Date(obs.last_verified_at).getTime();
+      if (!Number.isFinite(verifiedMs)) continue;
+      if ((nowMs - verifiedMs) / 1000 > retentionSeconds) {
+        this.observations.delete(id);
+        deleted++;
+      }
+    }
+    if (this.observations.size > MAX_OBSERVATIONS) {
+      const oldestFirst = [...this.observations.values()].sort(
+        (a, b) =>
+          new Date(a.last_verified_at).getTime() - new Date(b.last_verified_at).getTime(),
+      );
+      const excess = this.observations.size - MAX_OBSERVATIONS;
+      for (let i = 0; i < excess; i++) {
+        this.observations.delete(oldestFirst[i]!.observation_id);
         deleted++;
       }
     }

@@ -1,5 +1,6 @@
 import type { EventType } from "./events.js";
 import type { ResourceType } from "./resources.js";
+import type { ObservationKind } from "./observations.js";
 
 /**
  * Maximum acceptable age, in seconds, before a record is considered STALE.
@@ -9,6 +10,7 @@ import type { ResourceType } from "./resources.js";
 export const FRESHNESS_POLICY: {
   events: Record<EventType, number>;
   resources: Record<ResourceType, number>;
+  observations: Record<ObservationKind, number>;
 } = {
   events: {
     flood: 2 * 3600,
@@ -22,6 +24,11 @@ export const FRESHNESS_POLICY: {
     transit_disruption: 2 * 3600,
     evacuation_order: 12 * 3600,
     weather_warning: 6 * 3600,
+    // Satellite detections arrive up to ~3 h after the pass and passes are
+    // ~12 h apart. 4 x 6 h = 24 h retention matches the feed's 24 h window.
+    fire_detection: 6 * 3600,
+    // Perimeters are usually redrawn once a night.
+    fire_perimeter: 24 * 3600,
   },
   resources: {
     shelter: 24 * 3600,
@@ -30,6 +37,16 @@ export const FRESHNESS_POLICY: {
     food_water: 12 * 3600,
     charging: 12 * 3600,
     transport_hub: 6 * 3600,
+  },
+  observations: {
+    // AirNow reporting-area files are rewritten hourly; readings arrive about
+    // an hour after the hour they describe.
+    air_quality: 2 * 3600,
+    // NWPS gauges report every 15 to 60 minutes.
+    stream_gauge: 2 * 3600,
+    // The satellite smoke analysis is drawn a few times a day and arrives
+    // several hours after the period it covers.
+    smoke: 12 * 3600,
   },
 };
 
@@ -79,6 +96,10 @@ export function eventMaxAge(eventType: EventType): number {
 
 export function resourceMaxAge(resourceType: ResourceType): number {
   return FRESHNESS_POLICY.resources[resourceType];
+}
+
+export function observationMaxAge(kind: ObservationKind): number {
+  return FRESHNESS_POLICY.observations[kind];
 }
 
 /** Human-readable age, e.g. "8 min ago", "2 h ago". */

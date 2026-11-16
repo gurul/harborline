@@ -1,10 +1,13 @@
 import type { CanonicalEvent, SourceRecord, SourceTier } from "./events.js";
 import type { Resource } from "./resources.js";
+import type { Observation } from "./observations.js";
 
 export interface ConnectorItems {
   events: CanonicalEvent[];
   resources: Resource[];
   source_records: SourceRecord[];
+  /** Measured conditions (air quality, gauges, smoke). Not reconciled by absence. */
+  observations?: Observation[];
 }
 
 export type ConnectorResult =
@@ -20,6 +23,12 @@ export interface Connector {
   label: string;
   source_tier: SourceTier;
   expected_refresh_seconds: number;
+  /**
+   * True for feeds where a successful fetch with zero records is the normal
+   * state (satellite fire detections on a quiet day). Monitoring must not read
+   * zero records from such a feed as a silent failure.
+   */
+  zero_rows_expected?: boolean;
   fetch(now: Date): Promise<ConnectorResult>;
 }
 
@@ -38,5 +47,7 @@ export interface SourceHealth {
    * failure class the Camp Fire's undetected WEA outage exemplifies
    * (benchmark criterion 5). Null until the first success.
    */
-  last_success_records: { events: number; resources: number } | null;
+  last_success_records: { events: number; resources: number; observations?: number } | null;
+  /** Copied from the connector: zero records is normal for this feed. */
+  zero_rows_expected?: boolean;
 }

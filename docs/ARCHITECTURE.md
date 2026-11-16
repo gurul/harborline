@@ -22,6 +22,11 @@ Related reading: [BUILD_GUIDE.md](./BUILD_GUIDE.md) is the implementation spec;
 │ NWS   api.weather.gov/alerts/active?area=CA        Tier A
 │ USGS  earthquake.usgs.gov 2.5_week.geojson         Tier A
 │ FEMA  ARC Open Shelters FeatureServer (f=geojson)  Tier B
+│ WFIGS NIFC perimeters + incidents FeatureServer    Tier B
+│ FIRMS VIIRS NOAA-20 + NOAA-21 24 h CSV files       Tier C
+│ AirNow reportingarea.dat (hourly, agency AQI)      Tier B  observations
+│ NWPS  api.water.noaa.gov gauges in region bbox     Tier A  observations
+│ HMS   NOAA smoke polygons FeatureServer            Tier B  observations
 │ demo  local fixtures                               Tier A–E
 └────────┬─────────┘
          │  Connector.fetch(now) → ConnectorResult
@@ -36,7 +41,7 @@ Related reading: [BUILD_GUIDE.md](./BUILD_GUIDE.md) is the implementation spec;
 │  half-open retry probes the source                         │
 │  per-source: last_success_at, last_error, failure count    │
 └────────┬───────────────────────────────────────────────────┘
-         │  { events[], resources[], source_records[] }
+         │  { events[], resources[], source_records[], observations[] }
          ▼
 ┌────────────────────────────────────────────────────────────┐
 │ NORMALIZATION — connectors/src/normalize.ts                │
@@ -180,9 +185,20 @@ interface Connector {
   label: string;
   source_tier: SourceTier;
   expected_refresh_seconds: number;
+  /** An empty successful poll is normal for this feed (FIRMS, WFIGS, HMS). */
+  zero_rows_expected?: boolean;
   fetch(now: Date): Promise<ConnectorResult>;
 }
 ```
+
+An ok result may also carry `observations[]`: point readings (air quality, river gauge,
+smoke) that are not hazards. They live in their own store table, keyed by
+`observation_id`, keep only the newest reading, and are swept after four times their
+freshness budget. They never block a route or reject a shelter.
+
+FIRMS fetches the NOAA-20 and NOAA-21 files together and returns `ok: false` when either
+fails. A cluster confirmed by both satellites could otherwise be reconciled away by a
+partial poll. Zero rows with both files read is a normal `ok: true`.
 
 `ConnectorResult` is `{ ok: true, retrieved_at, events, resources, source_records }` or
 `{ ok: false, retrieved_at, error }`. **A connector never throws to the scheduler.** An
@@ -230,6 +246,11 @@ highest authority among its contributing records.
 | **C** | Verified institution — established newsroom or institutional account | `0.75` | Local newsroom report | `verified` |
 | **D** | Corroborated community report — multiple independent reports agreeing | `0.55` | Deferred; see [ROADMAP.md](./ROADMAP.md) | `developing` |
 | **E** | Unverified single report | `0.30` | Unverified social post | `unverified` (hard cap) |
+
+FIRMS detections are tier C. A satellite heat detection is an instrument reading, not an
+agency declaration: it can be a gas flare, a hot roof or sunlit ground, and it misses fire
+under cloud. Its label therefore never exceeds `verified`, and the routing rules in §8a
+treat it as unconfirmed.
 
 Tier D is defined in the schema but has no producing connector in the MVP; community intake
 is deferred precisely because unreviewed input is the fastest way to poison a trust layer.
@@ -296,6 +317,18 @@ age; they are excluded from recommendations and must never be described as curre
 | `evacuation_order` | 12 h | `43200` | Long-lived by design; rescinded explicitly |
 | `earthquake` | 24 h | `86400` | The event is instantaneous and historical |
 | `shelter_open` | 24 h | `86400` | Matches the FEMA/ARC daily sync cadence |
+| `fire_detection` | 6 h | `21600` | Satellites pass a few times a day; `ends_at` is newest detection + 24 h |
+| `fire_perimeter` | 24 h | `86400` | Perimeters are redrawn about daily |
+
+`fire` keeps its 1 h budget: it is the alert feed's fire, and its budget did not change.
+
+### Observations
+
+| Kind | Max age | Seconds | Rationale |
+|---|---|---|---|
+| `air_quality` | 2 h | `7200` | AirNow publishes hourly; one missed hour is tolerated |
+| `stream_gauge` | 2 h | `7200` | Gauges report every 15 to 60 min |
+| `smoke` | 12 h | `43200` | HMS analysts publish a few times a day |
 
 ### Resources
 
@@ -310,7 +343,7 @@ age; they are excluded from recommendations and must never be described as curre
 
 Helpers: `ageSeconds(lastVerifiedAt, now)`, `isStale(lastVerifiedAt, maxAgeSeconds, now)`
 (strictly greater than), `eventMaxAge(type)`, `resourceMaxAge(type)`, and
-`formatAge(lastVerifiedAt, now)` which yields `"just now"`, `"8 min ago"`, `"2 h ago"`,
+`observationMaxAge(kind)`, and `formatAge(lastVerifiedAt, now)` which yields `"just now"`, `"8 min ago"`, `"2 h ago"`,
 `"3 d ago"`.
 
 Freshness enters the system in three places, which is why it cannot be forgotten: it is a
@@ -400,6 +433,43 @@ never "safest" unqualified. The safety validator enforces this independently
 
 ---
 
+## 8a. Wildfire feeds and the routing rules for them
+
+Two event types carry wildfire data. They are separate from `fire` on purpose.
+
+| Rule | `fire_detection` (FIRMS, tier C) | `fire_perimeter` (WFIGS, tier B) |
+|---|---|---|
+| Geometry | Cluster footprint: MultiPolygon of pixel footprints plus a 100 m margin | Perimeter polygon; an incident with no perimeter is a Point |
+| Severity | `minor` (only low confidence, or a static heat source); `moderate`; `severe` only when seen on two passes within 12 h | `severe` under 50 % contained or not reported; `moderate` otherwise; RX burns `moderate`; 100 % contained dropped |
+| Eliminates a route | Never | Yes, when severe and a polygon (via `ZONE_HAZARD_TYPES`) |
+| Route cost | Fixed penalty: 15 min moderate, 30 min severe (`HAZARD_TYPE_PENALTY_MIN`), reported as `penalty_min` and `detection_penalty` | Exposure, like any hazard area |
+| Detour | When the best route crosses a detection, a second search runs with those edges blocked, and the lowest-risk route of both searches wins | Elimination already forces the detour |
+| Disclosure | Route summary and recommended action: "It includes N satellite heat detection(s), unconfirmed by a fire agency, detected X ago." | Named as a hazard area |
+| Shelters | Rejected only by a severe cluster; a moderate one adds a `cautions` entry | Rejected when inside a severe perimeter |
+| Act-now note | Never | As other severe immediate hazards |
+
+**Clustering.** Pixels link when their centres are closer than the larger pixel diagonal
+(single linkage, deterministic). A cluster id is a hash of its earliest member, so it is
+stable across polls while the cluster grows. Two passes means a different satellite, or the
+same satellite more than 30 minutes apart: granules of one overpass do not count twice.
+
+**Why detections never eliminate.** If a false-positive pixel sat on the only road, an
+eliminating rule would return "no route" and refuge-in-place guidance. That is a dangerous
+instruction based on one unconfirmed reading. The fixed penalty plus the detour search moves
+traffic off a detection when another road exists, and keeps the road, disclosed, when none
+does.
+
+**Ingest limits.** `calculate_routes` reads events within the origin-to-destination distance
+plus 10 km, not the whole store. The store emits a stream update only when an upsert changes
+something, so a feed that returns the same 50 detections each poll does not flood clients.
+Retention after expiry is measured from the newest time a feed returned the record
+(`max(last_verified_at, retrieved_at)`), so a record a feed keeps returning is not deleted.
+
+**Power.** No outage source is configured (`POWER_CONNECTOR_IDS` is empty). The environment
+summary reports power as `not_monitored`, never as "no outage" or "normal".
+
+---
+
 ## 9. Assistant pipeline
 
 ```
@@ -416,6 +486,9 @@ question + lat/lon
 │                      compare_source_records                   │
 │   general status   → get_active_events,                       │
 │                      get_official_instructions                │
+│   fire_nearby      → get_active_events (fire, evacuation),    │
+│                      get_environment_summary (25 km)          │
+│   air_quality      → get_environment_summary, alerts          │
 └──────────────────────────┬───────────────────────────────────┘
                            ▼
 ┌──────────────────────────────────────────────────────────────┐
@@ -483,6 +556,33 @@ factual content is lost.
 `AssistantResponse` is shaped so a sourceless answer is hard to construct: `sources` and
 `freshness_note` are required fields, `evidence_event_ids` ties the prose back to specific
 records, and `composed_by` tells the UI (and the evals) which path produced the text.
+
+**Fire and air questions.** `fire_nearby` matches fire, wildfire, burning, smoke and
+hotspot; `air_quality` matches air, AQI, breathing and pollution and is checked first. Both
+come after the shelter, evacuation and road intents, so "Should I stay home?" and "What is
+the evacuation route?" keep their question types. Their templates are deterministic. A fire
+answer lists official records first, gives satellite detections one line marked
+"Unconfirmed by a fire agency", and ends with a fixed limits line. An air answer copies the
+AQI, category and pollutant from the reading and uses fixed EPA guidance per category. The
+model is not called when the recommended route crosses a fire detection or perimeter.
+Detection source records collapse to one source per provider, with the newest time.
+
+Validator rules added for these questions:
+
+- `no_fire_claim`: "no fire", "no active fires", "fire-free". The one allowed form is a
+  sentence that says a missing detection is not proof ("... is not proof of no fire").
+- Banned air reassurance: "the air is safe", "safe to breathe", "safe to go outside".
+- `aqi_mismatch` / `aqi_category_mismatch`: a model-stated AQI number or category must equal
+  the reading. This applies to model text only: deterministic text copies the reading, and
+  quoted alert text can carry other numbers.
+- `stale_claim_as_current`: a present-tense air state ("the air quality is good") without a
+  fresh reading, on both paths.
+
+**Access needs and a chosen shelter.** `access_needs` (`wheelchair`, `accessible_restroom`,
+`pets`) and `destination_resource_id` change only the deterministic ranking in
+`rankResources`. `gatherEvidence` and the composer's `alignDestination` use the same ranking,
+so the route `gatherEvidence` computes ends at the shelter the answer names. The response
+carries that shelter as `destination_resource_id` and its route as `route`.
 
 ---
 

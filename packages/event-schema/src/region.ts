@@ -25,6 +25,18 @@ export interface RegionConfig {
    * postal code, full name, ISO code, and FIPS code.
    */
   stateAliases: string[];
+  /**
+   * Known permanent heat sources (refineries, power plants, landfills) that
+   * satellites detect on every pass. A detection cluster centred within
+   * `radius_m` of one is kept but marked minor, with the reason stated.
+   */
+  staticHeatSources?: StaticHeatSource[];
+}
+
+export interface StaticHeatSource {
+  name: string;
+  center: LonLat;
+  radius_m: number;
 }
 
 /**

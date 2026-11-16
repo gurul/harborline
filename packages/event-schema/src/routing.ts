@@ -21,6 +21,12 @@ export const RouteCandidateSchema = z.object({
   hazard_exposure_m: z.number(),
   intersecting_event_ids: z.array(z.string()),
   risk_score: z.number(),
+  /**
+   * Fixed per-type risk added for hazards that never eliminate a route
+   * (satellite heat detections), in risk minutes. Reported on its own so a
+   * breakdown never folds it into another term.
+   */
+  penalty_min: z.number().optional(),
   eliminated: z.boolean(),
   rejected_reason: z
     .enum(["closure_intersection", "evacuation_zone", "hazard_zone", "no_path"])

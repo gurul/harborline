@@ -111,7 +111,10 @@ streamRoutes.get("/", (c) => {
           overflowed = false;
           await stream.writeSSE({
             event: "resync",
-            data: JSON.stringify({ reason: "buffer_overflow" }),
+            // Tell the client exactly what to do: the store is the source of
+            // truth, so refetching the list endpoint recovers every update
+            // this connection dropped.
+            data: JSON.stringify({ reason: "buffer_overflow", refetch: "/v1/events" }),
           });
           lastWriteAt = Date.now();
         }

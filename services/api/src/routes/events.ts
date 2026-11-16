@@ -29,6 +29,12 @@ const EventsQuerySchema = z
     lon: lonParam().optional(),
     radius_m: radiusParam(),
     types: z.string().min(1).optional(),
+    /**
+     * Types to leave out. Satellite detections can number in the hundreds;
+     * without this a client that wants closures and orders would see them
+     * pushed past the limit by detections sorted ahead of them.
+     */
+    exclude_types: z.string().min(1).optional(),
     limit: limitParam(DEFAULT_LIMIT, MAX_LIMIT),
   })
   // Half a coordinate is not a location. Accepting `lat` alone would silently
@@ -56,6 +62,7 @@ eventsRoutes.get("/", (c) => {
     lon: c.req.query("lon"),
     radius_m: c.req.query("radius_m"),
     types: c.req.query("types"),
+    exclude_types: c.req.query("exclude_types"),
     limit: c.req.query("limit"),
   });
   if (!parsed.success) {
@@ -70,10 +77,22 @@ eventsRoutes.get("/", (c) => {
   }
 
   let types: EventType[] | undefined;
+  let excluded: EventType[] | undefined;
   try {
     types = parseTypes(parsed.data.types);
   } catch {
     return c.json({ error: "invalid_query", message: "unknown value in `types`" }, 400);
+  }
+  try {
+    excluded = parseTypes(parsed.data.exclude_types);
+  } catch {
+    return c.json({ error: "invalid_query", message: "unknown value in `exclude_types`" }, 400);
+  }
+  // Exclusion is applied before the store query, so the limit is spent only
+  // on the types the caller wants.
+  if (excluded && excluded.length > 0) {
+    types = (types ?? EventTypeSchema.options).filter((t) => !excluded!.includes(t));
+    if (types.length === 0) return c.json({ events: [] });
   }
 
   const { lat, lon } = parsed.data;

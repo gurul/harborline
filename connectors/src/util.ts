@@ -234,6 +234,12 @@ async function readBoundedText(response: Response, url: string): Promise<string>
 }
 
 /**
+ * Generic User-Agent for the keyless feeds. It names the software only: no
+ * person, address or account.
+ */
+export const FEED_USER_AGENT = "harborline-feed/1.0";
+
+/**
  * GET JSON with a hard timeout, a redirect refusal (an upstream redirect can
  * move the read to an unvetted host, so it is an error rather than a follow)
  * and a bounded body.
@@ -243,6 +249,19 @@ export async function fetchJson(
   url: string,
   options: FetchJsonOptions = {},
 ): Promise<unknown> {
+  const text = await fetchText(url, options);
+  return JSON.parse(text) as unknown;
+}
+
+/**
+ * GET a text body (CSV, pipe-delimited files) with the same timeout, redirect
+ * refusal and byte cap as `fetchJson`.
+ * Throws on network error, redirect, non-2xx or oversized body.
+ */
+export async function fetchText(
+  url: string,
+  options: FetchJsonOptions = {},
+): Promise<string> {
   const { headers = {}, timeoutMs = 10_000 } = options;
   const response = await fetch(url, {
     method: "GET",
@@ -265,6 +284,5 @@ export async function fetchJson(
     }
   }
 
-  const text = await readBoundedText(response, url);
-  return JSON.parse(text) as unknown;
+  return readBoundedText(response, url);
 }
